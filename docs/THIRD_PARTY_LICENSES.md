@@ -98,7 +98,8 @@ LGPL-3 licensing. Evidence for the v0.1.0 release:
 **Finding: PASS — no GPL linkage.** LibreDWG/ODA are used as an
 external process only; they are not linked, vendored, fetched, or shipped, so Musa CAD's
 LGPL-3 distribution is not affected by their GPL/EULA terms. A user who wants DWG support
-installs the converter separately (see [`BUILD.md`](BUILD.md)).
+installs the converter separately (see [Building](https://wiki.musacad.org/developer/building/) on
+the wiki).
 
 ## Reproducing the scan
 ```sh

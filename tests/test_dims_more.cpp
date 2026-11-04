@@ -326,7 +326,7 @@ TEST_CASE("DIMCONTINUE and DIMBASELINE: the prompts, Select, Offset and Undo") {
     REQUIRE(h.last<ChainDimensionCommand>()->op == ChainDimensionCommand::Op::Back);
     REQUIRE(h.count<UndoLastGroupCommand>() == 1);
     h.proc.submit_line("U");
-    REQUIRE(h.out.lines.back() == "Nothing to undo.");
+    REQUIRE(h.count<UndoLastGroupCommand>() == 2); // the engine knows whether one is left to undo
     h.proc.submit_line("");
     REQUIRE(h.out.prompt == "Select base dimension: ");
     h.proc.submit_line("5,5");

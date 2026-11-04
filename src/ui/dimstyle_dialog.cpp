@@ -1048,6 +1048,12 @@ void DimStyleManager::rename_style() {
     if (!ok || name.isEmpty() || name == qs(styles_[i].name)) {
         return;
     }
+    for (const QChar c : name) { // as New checks a name
+        if (QStringLiteral("<>/\\\":;?*|,=`").contains(c)) {
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("A style name cannot contain %1").arg(c));
+            return;
+        }
+    }
     for (const core::DimStyle& s : styles_) {
         if (qs(s.name) == name) {
             QMessageBox::warning(this, windowTitle(), QStringLiteral("There is already a style called %1.").arg(name));

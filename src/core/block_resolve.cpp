@@ -9,6 +9,8 @@
 #include <cmath>
 
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/hatch.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/math/mat3.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/text/mtext.hpp"
@@ -181,6 +183,42 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
                 pline::band_outline(pl.verts, pl.bulges, pl.widths, pl.closed, tol, band);
                 emit_pairs_transformed(xform, band, rp, out);
             }
+        }
+    }
+    // Hatches: filled in the block's frame and placed like the rest; a line pattern's
+    // segments are made in the block's frame too, so they turn and scale with the block.
+    std::vector<Vec2> htris;
+    std::vector<hatch::Segment> hsegs;
+    for (const BlockHatch& bh : bc.hatches) {
+        const ResolvedProps rp = member_props(store, bh.props, inherited);
+        if (bh.pattern_name == "WIPEOUT") {
+            continue; // a mask has nothing of its own to draw
+        }
+        if (bh.pattern_name == "SOLID" || bh.pattern_name == "GRADIENT") {
+            if (fills == nullptr || !store.fillmode()) {
+                continue;
+            }
+            htris.clear();
+            hatch::triangulate_filled(bh.loops, htris);
+            for (std::size_t i = 0; i + 2 < htris.size(); i += 3) {
+                fills->push_back(InsertFill{xform.transform_point(htris[i]), xform.transform_point(htris[i + 1]),
+                                            xform.transform_point(htris[i + 2]), rp.color});
+            }
+            continue;
+        }
+        const hatch::Pattern* pat = store.pattern(bh.pattern_name);
+        if (pat == nullptr || !store.fillmode()) {
+            continue;
+        }
+        const bool iso_size = bh.iso && pat == hatch::builtin_pattern(bh.pattern_name) &&
+                              bh.pattern_name != "_USER" && bh.pattern_name != "_USERDOUBLE";
+        hsegs.clear();
+        hatch::generate_pattern_segments(bh.loops, *pat,
+                                         iso_size ? bh.pattern_scale * hatch::kIsoPatternFactor : bh.pattern_scale,
+                                         bh.pattern_angle, bh.pattern_origin, hsegs);
+        for (const hatch::Segment& sg : hsegs) {
+            out.push_back(InsertSeg{xform.transform_point(sg.a), xform.transform_point(sg.b), rp.color,
+                                    rp.lineweight, Linetype::Continuous});
         }
     }
     std::vector<Vec2> tseg;

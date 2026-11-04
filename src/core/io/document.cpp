@@ -494,6 +494,18 @@ Document document_from_store(const GeometryStore& store) {
             bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props, {},
                                        0, t.align, t.width_factor});
         }
+        for (const BlockHatch& h : b->content.hatches) {
+            DocHatch dh;
+            dh.loops = h.loops;
+            dh.pattern_name = h.pattern_name;
+            dh.pattern_scale = h.pattern_scale;
+            dh.pattern_angle = h.pattern_angle;
+            dh.pattern_origin = h.pattern_origin;
+            dh.props = h.props;
+            dh.color2 = h.color2;
+            dh.iso = h.iso;
+            bd.hatches.push_back(std::move(dh));
+        }
         for (const BlockAttDef& a : b->content.attdefs) {
             bd.attdefs.push_back(DocAttDef{DocText{a.text.pos, a.text.height, a.text.rotation,
                                                    a.text.justify, a.tag, a.text.props, {}, 0,
@@ -593,6 +605,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
                 cb.content.texts.push_back(
                     BlockText{t.pos, t.height, t.rotation, t.justify, t.content, t.props, t.align,
                               t.width_factor});
+            }
+            for (const DocHatch& h : bd.hatches) {
+                cb.content.hatches.push_back(BlockHatch{h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,
+                                                        h.pattern_origin, h.props, h.color2, h.iso});
             }
             for (const DocAttDef& a : bd.attdefs) {
                 cb.content.attdefs.push_back(

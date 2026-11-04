@@ -1294,13 +1294,20 @@ namespace {
 using StretchWindow = std::pair<Vec2, Vec2>;
 
 /// Apply STRETCH's per-kind rule to one captured entity: every "stretch point" (vertex,
-/// endpoint, or the single anchor of a rigid object) that lies inside ANY of `windows`
-/// moves by `d`; the rest stay. Returns false if nothing moved. A point inside two
-/// overlapping windows moves once -- membership is a predicate, not a sum.
-bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
+/// endpoint, or the single anchor of a rigid object) that lies inside ANY of `windows`,
+/// or of the crossing polygons and lassos in `polygons`, moves by `d`; the rest stay.
+/// Returns false if nothing moved. A point inside two overlapping windows moves once --
+/// membership is a predicate, not a sum.
+bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows,
+                 std::span<const std::vector<Vec2>> polygons = {}) {
     const auto inside = [&](Vec2 p) {
         for (const StretchWindow& w : windows) {
             if (p.x >= w.first.x && p.x <= w.second.x && p.y >= w.first.y && p.y <= w.second.y) {
+                return true;
+            }
+        }
+        for (const std::vector<Vec2>& poly : polygons) {
+            if (poly.size() >= 3 && point_in_polygon(poly, p)) {
                 return true;
             }
         }
@@ -4906,13 +4913,13 @@ std::string GeometryEngine::list_geometry(EntityHandle h) const {
     }
     case EntityKind::Circle: {
         const CircleData* c = store_.circle(h);
-        out += ",  centre (" + fmt_len(c->center.x) + "," + fmt_len(c->center.y) + "),  radius " +
+        out += ",  center (" + fmt_len(c->center.x) + "," + fmt_len(c->center.y) + "),  radius " +
                fmt_len(c->radius);
         break;
     }
     case EntityKind::Arc: {
         const ArcData* a = store_.arc(h);
-        out += ",  centre (" + fmt_len(a->center.x) + "," + fmt_len(a->center.y) + "),  radius " +
+        out += ",  center (" + fmt_len(a->center.x) + "," + fmt_len(a->center.y) + "),  radius " +
                fmt_len(a->radius) + ",  from " + fmt_ang(a->start_angle) + " to " +
                fmt_ang(a->end_angle);
         break;
@@ -5459,11 +5466,13 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
     // the selection since (an edit, a paste, a new document) they are meaningless, and
     // every selected object falls back to moving whole -- which is exactly what AutoCAD
     // does for objects that were not selected by a crossing window.
-    const bool windows_valid = !stretch_windows_.empty() && stretch_windows_sel_ == selection_;
+    const bool windows_valid =
+        (!stretch_windows_.empty() || !stretch_polygons_.empty()) && stretch_windows_sel_ == selection_;
     // "Crossed by a recorded window" does not depend on the drag, so it is classified
     // once per (selection, windows, edit state) and reused for every preview frame.
     if (!(stretch_class_valid_ && stretch_class_serial_ == edit_serial_ &&
-          stretch_class_handles_ == selection_ && stretch_class_windows_ == stretch_windows_)) {
+          stretch_class_handles_ == selection_ && stretch_class_windows_ == stretch_windows_ &&
+          stretch_class_polygons_ == stretch_polygons_)) {
         stretch_class_crossed_.assign(selection_.size(), false);
         if (windows_valid) {
             for (std::size_t i = 0; i < selection_.size(); ++i) {
@@ -5477,10 +5486,16 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
                         break;
                     }
                 }
+                for (const auto& poly : stretch_polygons_) {
+                    if (!stretch_class_crossed_[i] && entity_hits_polygon(h, poly, /*crossing=*/true)) {
+                        stretch_class_crossed_[i] = true;
+                    }
+                }
             }
         }
         stretch_class_handles_ = selection_;
         stretch_class_windows_ = stretch_windows_;
+        stretch_class_polygons_ = stretch_polygons_;
         stretch_class_serial_ = edit_serial_;
         stretch_class_valid_ = true;
     }
@@ -5496,7 +5511,7 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
             // Partly enclosed: only the caught vertices move. A line that merely passes
             // through the window with both ends outside is crossed but unchanged, and
             // AutoCAD leaves it alone too -- `changed` stays false and it is skipped.
-            changed = stretch_cmd(edited, delta, stretch_windows_);
+            changed = stretch_cmd(edited, delta, stretch_windows_, stretch_polygons_);
         } else {
             translate_cmd(edited, delta); // enclosed or picked: moved whole
             changed = true;
@@ -5574,7 +5589,7 @@ void GeometryEngine::apply_circle_tangent(const AddCircleTangentCommand& c) {
     push_create_item(c.group, h, cmd);
     redo_.clear();
     geom_dirty_ = true;
-    report("Circle: radius " + std::to_string(result->radius));
+    report("Circle: radius " + units::format_length(result->radius, store_.units())); // as the other methods say it
 }
 
 void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
@@ -5830,6 +5845,10 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
             e.props.linetype = ensure_linetype(e.props.linetype);
             e.block.font = ensure_font(e.block.font);
         }
+        for (auto& e : def.content.hatches) {
+            e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
+        }
         for (auto& ins : def.content.inserts) {
             ins.block = ensure_block(ins.block); // recursive closure (block tree)
             ins.props.layer = ensure_layer(ins.props.layer);
@@ -5991,6 +6010,8 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, 
         if (!copy) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(result); // a copy goes over the rest, as COPY's does
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -6032,6 +6053,8 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, 
         if (!copy) {
             remove_indexed(h);
             push_erase_item(group, h, original);
+        } else {
+            as_new_object(result); // a copy goes over the rest, as COPY's does
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -6111,8 +6134,9 @@ void GeometryEngine::apply_array_preview(const ArrayPreviewCommand& c) {
         const Vec2 sp = c.rect.auto_spacing ? array_default_spacing() : Vec2{c.rect.dx, c.rect.dy};
         apply_array_rect(c.rect.rows, c.rect.cols, sp.x, sp.y, c.rect.angle, 0);
     } else if (c.type == 2) {
-        apply_array_polar(c.polar.center, c.polar.count, c.polar.total_angle, c.polar.rotate_items, 0,
-                          c.polar.rows, c.polar.row_spacing);
+        ArrayPolarCommand polar = c.polar;
+        polar.group = 0;
+        apply_array_polar(polar);
     } else {
         apply_array_path(c.path);
     }
@@ -6229,41 +6253,39 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
 
     // The selection rides the path by ONE shared base point, so a multi-entity
     // selection keeps its internal arrangement instead of scattering entity by entity.
-    Vec2 base = c.base;
-    if (!c.has_base) {
-        Vec2 lo{0, 0};
-        Vec2 hi{0, 0};
-        bool any = false;
-        for (const EntityHandle h : sel) {
-            Vec2 l;
-            Vec2 g;
-            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
-                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
-                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
-                any = true;
-            }
-        }
-        if (!any) {
-            report("Nothing selected to array.");
-            return;
-        }
-        base = {(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
-    }
-
+    // AutoCAD's default base point is the end of the path curve: the selection stays where
+    // it is as the first item, and the others keep its offset from the path. A base point
+    // of its own goes on the path, the selection moved to the first station with it.
     double ang0 = 0.0;
     Vec2 p0;
     sampler.at(stations[0], p0, ang0);
+    Vec2 base = c.base;
+    if (!c.has_base) {
+        double a = 0.0;
+        sampler.at(0.0, base, a);
+    }
+    std::vector<std::pair<EntityHandle, Command>> source;
+    for (const EntityHandle h : sel) {
+        if (store_.is_valid(h)) {
+            source.emplace_back(h, capture_entity(h));
+        }
+    }
+    if (source.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
 
     int made = 0;
+    std::vector<EntityHandle> moved;
     for (std::size_t i = 0; i < stations.size(); ++i) {
+        if (i == 0 && !c.has_base && stations[0] < 1e-12) {
+            continue; // the selection itself is the first item, where it is
+        }
         Vec2 p;
         double ang = 0.0;
         sampler.at(stations[i], p, ang);
-        for (const EntityHandle h : sel) {
-            if (!store_.is_valid(h)) {
-                continue;
-            }
-            Command copy = capture_entity(h);
+        for (const auto& [h, original] : source) {
+            Command copy = original;
             if (c.align) {
                 // Turn each copy by how far the tangent has swung since the FIRST
                 // station, about the shared base, so item 0 keeps the orientation the
@@ -6271,9 +6293,22 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
                 rotate_cmd(copy, base, ang - ang0);
             }
             translate_cmd(copy, p - base);
+            if (i == 0 && array_sink_ == nullptr) {
+                // The selection itself onto the path, an edit that keeps its place in the
+                // draw order.
+                remove_indexed(h);
+                push_erase_item(c.group, h, original);
+                const EntityHandle nh = create_indexed(copy);
+                push_create_item(c.group, nh, copy);
+                moved.push_back(nh);
+                continue;
+            }
             emit_copy(copy, c.group);
             ++made;
         }
+    }
+    if (!moved.empty()) {
+        selection_ = moved;
     }
     if (array_sink_ != nullptr) {
         return; // the preview's copies
@@ -6399,8 +6434,14 @@ Vec2 GeometryEngine::array_default_spacing() const {
     return w > 1e-12 ? Vec2{w * 1.5, h * 1.5} : Vec2{1.0, 1.0};
 }
 
-void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
-                                       bool rotate_items, std::uint64_t group, int rows, double row_spacing) {
+void GeometryEngine::apply_array_polar(const ArrayPolarCommand& c) {
+    const Vec2 center = c.center;
+    const int count = c.count;
+    const double total_angle = c.total_angle;
+    const bool rotate_items = c.rotate_items;
+    const std::uint64_t group = c.group;
+    int rows = c.rows;
+    const double row_spacing = c.row_spacing;
     const std::vector<EntityHandle> sel = selection_;
     if (sel.empty()) {
         report("Nothing selected to array.");
@@ -6409,6 +6450,29 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     if (count < 2) {
         report("Polar array: need at least two items.");
         return;
+    }
+    // One base point for the whole selection -- the one given, else the centre of its
+    // extents -- so items that are not rotated, and the rows, keep the selection's
+    // arrangement. -ARRAY without a base point keeps each object's own reference point.
+    std::optional<Vec2> base;
+    if (c.has_base) {
+        base = c.base;
+    } else if (!c.own_anchors) {
+        Vec2 lo{0, 0};
+        Vec2 hi{0, 0};
+        bool any = false;
+        for (const EntityHandle h : sel) {
+            Vec2 l;
+            Vec2 g;
+            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
+                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
+                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
+                any = true;
+            }
+        }
+        if (any) {
+            base = (lo + hi) * 0.5;
+        }
     }
     // Full circle distributes count items evenly; a partial fill spans the angle
     // across (count-1) gaps (AutoCAD semantics).
@@ -6429,19 +6493,22 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
                 continue;
             }
             Command copy = capture_entity(h);
+            Vec2 anchor = base.value_or(command_anchor(copy));
             if (row > 0) {
-                // The next ring out: away from the centre, through where the item is.
-                const Vec2 out = command_anchor(copy) - center;
+                // The next ring out: away from the centre, through the base point.
+                const Vec2 out = anchor - center;
                 const double len = length(out);
                 if (len > 1e-12) {
-                    translate_cmd(copy, out * (row_spacing * static_cast<double>(row) / len));
+                    const Vec2 outward = out * (row_spacing * static_cast<double>(row) / len);
+                    translate_cmd(copy, outward);
+                    anchor = anchor + outward;
                 }
             }
             if (rotate_items) {
                 rotate_cmd(copy, center, a);
             } else {
-                // Move the copy around the circle without rotating the entity.
-                const Vec2 anchor = command_anchor(copy);
+                // Move the copy around the circle without rotating the entity: its base
+                // point goes round.
                 const double cs = std::cos(a);
                 const double sn = std::sin(a);
                 const Vec2 d = anchor - center;
@@ -7923,6 +7990,25 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                                                  sub.rotation + in->rotation, 0, sub.props,
                                                  store_.insert_attribs(sub)});
             }
+            for (const BlockHatch& bh : def.content.hatches) {
+                AddHatchCommand hc;
+                for (const std::vector<Vec2>& loop : bh.loops) {
+                    std::vector<Vec2> placed;
+                    placed.reserve(loop.size());
+                    for (const Vec2& p : loop) {
+                        placed.push_back(xf(p));
+                    }
+                    hc.loops.push_back(std::move(placed));
+                }
+                hc.pattern_name = bh.pattern_name;
+                hc.pattern_scale = bh.pattern_scale * std::abs(in->scale_x);
+                hc.pattern_angle = bh.pattern_angle + in->rotation;
+                hc.pattern_origin = xf(bh.pattern_origin);
+                hc.props = bh.props;
+                hc.color2 = bh.color2;
+                hc.iso = bh.iso;
+                parts.push_back(std::move(hc));
+            }
             break;
         }
         case EntityKind::Dimension: {
@@ -8482,6 +8568,13 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
                                                           pl->elevation, pl->thickness});
             break;
         }
+        case EntityKind::Hatch: {
+            const HatchData* hd = st.hatch(h);
+            content.hatches.push_back(BlockHatch{st.hatch_loops(*hd), std::string(st.string_of(*hd)),
+                                                 hd->pattern_scale, hd->pattern_angle, hd->pattern_origin,
+                                                 hd->props, hd->color2, hd->iso});
+            break;
+        }
         case EntityKind::Text: {
             const TextData* t = st.text(h);
             content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
@@ -8515,7 +8608,6 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Dimension:
         case EntityKind::Leader:
         case EntityKind::MLeader:
-        case EntityKind::Hatch:
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
@@ -8547,6 +8639,7 @@ std::vector<EntityHandle> block_material(const GeometryStore& st) {
     collect(st.polylines(), EntityKind::Polyline);
     collect(st.mtexts(), EntityKind::MText);
     collect(st.inserts(), EntityKind::Insert);
+    collect(st.hatches(), EntityKind::Hatch);
     for (std::uint32_t i = 0; i < st.texts().slot_count(); ++i) {
         if (st.texts().alive(i) && st.texts().data()[i].props.space() == 0) {
             out.push_back(EntityHandle{i, st.texts().generations()[i], EntityKind::Text});
@@ -8600,7 +8693,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
     }
     std::uint16_t bi = 0xFFFF;
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == c.name) {
+        if (same_table_name(store_.block(i)->name, c.name)) {
             bi = i;
         }
     }
@@ -10065,7 +10158,7 @@ std::uint16_t GeometryEngine::load_xref_definition(const std::string& full_path,
     std::vector<bool> added(tmp.block_count(), true); // false: one of ours, kept as it is
     const auto find_block = [&](const std::string& n) -> std::uint16_t {
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-            if (store_.block(i)->name == n) {
+            if (same_table_name(store_.block(i)->name, n)) {
                 return i;
             }
         }
@@ -10864,7 +10957,7 @@ void GeometryEngine::apply_xref_attach(const XrefAttachCommand& c) {
     }
     const std::string name = fs::path(c.path).stem().string();
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == name && store_.block(i)->xref_path.empty()) {
+        if (same_table_name(store_.block(i)->name, name) && store_.block(i)->xref_path.empty()) {
             report("XREF: a block named \"" + name + "\" already exists in this drawing.");
             return;
         }
@@ -10948,7 +11041,7 @@ void GeometryEngine::reload_all_xrefs() {
 void GeometryEngine::apply_xref_detach(const XrefDetachCommand& c) {
     std::uint16_t bi = 0xFFFF;
     for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-        if (store_.block(i)->name == c.name && !store_.block(i)->xref_path.empty()) {
+        if (same_table_name(store_.block(i)->name, c.name) && !store_.block(i)->xref_path.empty()) {
             bi = i;
         }
     }
@@ -10993,7 +11086,7 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     } else {
         const BlockDef* def = nullptr;
         for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-            if (store_.block(i)->name == c.name) {
+            if (same_table_name(store_.block(i)->name, c.name)) {
                 def = store_.block(i);
             }
         }
@@ -11028,6 +11121,24 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
             io::DocMText dm{m.block, m.content, m.props};
             dm.block.pos = m.block.pos - o;
             doc.mtexts.push_back(std::move(dm));
+        }
+        for (const BlockHatch& bh : def->content.hatches) {
+            io::DocHatch dh;
+            for (const std::vector<Vec2>& loop : bh.loops) {
+                std::vector<Vec2> moved;
+                for (const Vec2& p : loop) {
+                    moved.push_back(p - o);
+                }
+                dh.loops.push_back(std::move(moved));
+            }
+            dh.pattern_name = bh.pattern_name;
+            dh.pattern_scale = bh.pattern_scale;
+            dh.pattern_angle = bh.pattern_angle;
+            dh.pattern_origin = bh.pattern_origin - o;
+            dh.props = bh.props;
+            dh.color2 = bh.color2;
+            dh.iso = bh.iso;
+            doc.hatches.push_back(std::move(dh));
         }
         if (!def->content.inserts.empty()) {
             // Nested inserts need their definitions: carry the whole block table.
@@ -11815,65 +11926,114 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
             report("Break: that polyline has no length.");
             return;
         }
+        const std::size_t n = v.size();
+        const std::size_t segs = pl->closed ? n : n - 1;
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        const auto bulge = [&](std::size_t i) { return i < bs.size() ? bs[i] : 0.0; };
         // Position along the polyline as (segment index + fraction), which orders the
-        // two break points even when they fall on different segments.
+        // two break points even when they fall on different segments. On an arc segment
+        // the fraction is of its sweep, so the point is on the arc.
         const auto locate = [&](Vec2 p) {
-            const int si = nearest_pl_segment(v, pl->closed, p);
-            if (si < 0) {
-                return 0.0;
+            double best_u = 0.0;
+            double best_d = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < segs; ++i) {
+                double t = 0.0;
+                double d = 0.0;
+                pline::detail::locate_on_segment(v[i], v[(i + 1) % n], bulge(i), p, t, d);
+                if (d < best_d) {
+                    best_d = d;
+                    best_u = static_cast<double>(i) + t;
+                }
             }
-            const std::size_t i = static_cast<std::size_t>(si);
-            const Vec2 a = v[i];
-            const Vec2 b = v[(i + 1) % v.size()];
-            const Vec2 d = b - a;
-            const double len2 = length_squared(d);
-            const double t = len2 > 1e-18 ? std::clamp(dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
-            return static_cast<double>(si) + t;
+            return best_u;
+        };
+        const auto split = [&](double u, std::size_t& i, double& t) {
+            i = std::min(static_cast<std::size_t>(std::floor(u)), segs - 1);
+            t = std::clamp(u - static_cast<double>(i), 0.0, 1.0);
         };
         const auto point_at = [&](double u) {
-            const std::size_t i = static_cast<std::size_t>(std::floor(u));
-            const double t = u - static_cast<double>(i);
-            const Vec2 a = v[std::min(i, v.size() - 1)];
-            const Vec2 b = v[(i + 1) % v.size()];
-            return a + (b - a) * t;
+            std::size_t i = 0;
+            double t = 0.0;
+            split(u, i, t);
+            const Vec2 a = v[i];
+            const Vec2 b = v[(i + 1) % n];
+            if (std::abs(bulge(i)) <= 1e-12) {
+                return a + (b - a) * t;
+            }
+            const pline::detail::ArcOf arc = pline::detail::arc_of(a, b, bulge(i));
+            const double ang = arc.start + arc.sweep * t;
+            return arc.center + Vec2{std::cos(ang), std::sin(ang)} * arc.radius;
+        };
+        // The bulge of the part of segment i between fractions t0 and t1.
+        const auto part = [&](std::size_t i, double t0, double t1) {
+            const double b = bulge(i);
+            return std::abs(b) <= 1e-12 ? 0.0 : std::tan(4.0 * std::atan(b) * (t1 - t0) / 4.0);
         };
         double u1 = locate(c.p1);
         double u2 = at_point ? u1 : locate(c.p2);
         if (u1 > u2) {
             std::swap(u1, u2);
         }
-        // A closed polyline breaks into ONE open run: the part that survives is the
-        // stretch from the second point round to the first.
-        const auto emit = [&](std::vector<Vec2> pts) {
-            if (pts.size() >= 2) {
+        std::size_t i1 = 0;
+        std::size_t i2 = 0;
+        double t1 = 0.0;
+        double t2 = 0.0;
+        split(u1, i1, t1);
+        split(u2, i2, t2);
+        // One piece: its vertices and the bulge of the segment each one starts; a vertex
+        // on top of the one before (a break at a vertex) is dropped with its empty segment.
+        const auto emit = [&](const std::vector<Vec2>& pts, const std::vector<double>& bul) {
+            std::vector<Vec2> out_pts;
+            std::vector<double> out_bul;
+            for (std::size_t k = 0; k < pts.size(); ++k) {
+                if (!out_pts.empty() && length(pts[k] - out_pts.back()) <= 1e-9) {
+                    out_bul.back() = bul[k];
+                    continue;
+                }
+                out_pts.push_back(pts[k]);
+                out_bul.push_back(bul[k]);
+            }
+            if (out_pts.size() >= 2) {
                 AddPolylineCommand pc;
-                pc.points = std::move(pts);
+                pc.points = std::move(out_pts);
                 pc.closed = false;
                 pc.props = pl->props;
+                if (std::any_of(out_bul.begin(), out_bul.end(), [](double b) { return std::abs(b) > 1e-12; })) {
+                    pc.bulges = std::move(out_bul);
+                }
                 pieces.push_back(std::move(pc));
             }
         };
         if (pl->closed) {
+            // A closed polyline breaks into ONE open run: the part that survives is the
+            // stretch from the second point round to the first.
             std::vector<Vec2> run{point_at(u2)};
-            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1;
-                 k <= static_cast<std::size_t>(std::floor(u1)) + v.size(); ++k) {
-                run.push_back(v[k % v.size()]);
+            std::vector<double> rb{part(i2, t2, 1.0)};
+            for (std::size_t k = i2 + 1; k <= i1 + n; ++k) {
+                run.push_back(v[k % n]);
+                rb.push_back(k == i1 + n ? part(i1, 0.0, t1) : bulge(k % n));
             }
             run.push_back(point_at(u1));
-            emit(std::move(run));
+            rb.push_back(0.0);
+            emit(run, rb);
         } else {
-            std::vector<Vec2> head(v.begin(),
-                                   v.begin() + static_cast<std::ptrdiff_t>(
-                                                   std::floor(u1)) + 1);
+            std::vector<Vec2> head(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(i1) + 1);
+            std::vector<double> hb;
+            for (std::size_t k = 0; k < i1; ++k) {
+                hb.push_back(bulge(k));
+            }
+            hb.push_back(part(i1, 0.0, t1));
             head.push_back(point_at(u1));
-            emit(std::move(head));
+            hb.push_back(0.0);
+            emit(head, hb);
 
             std::vector<Vec2> tail{point_at(u2)};
-            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1; k < v.size();
-                 ++k) {
+            std::vector<double> tb{part(i2, t2, 1.0)};
+            for (std::size_t k = i2 + 1; k < n; ++k) {
                 tail.push_back(v[k]);
+                tb.push_back(k + 1 < n ? bulge(k) : 0.0);
             }
-            emit(std::move(tail));
+            emit(tail, tb);
         }
         break;
     }
@@ -11907,7 +12067,18 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
 void GeometryEngine::apply_object_dimension(const AddObjectDimensionCommand& c) {
     DimData d;
     if (!resolve_dim_defs(c.type, c.pick1, c.pick2, c.pick_radius, d, c.pick3, c.pick4)) {
-        report("Could not dimension that object -- select a line, circle, or arc.");
+        // What this kind of dimension can be made from (resolve_dim_defs).
+        const char* what = "select a line, polyline segment or arc";
+        switch (static_cast<DimType>(c.type)) {
+        case DimType::Linear: what = "select a line, polyline segment, arc or circle"; break;
+        case DimType::Radius:
+        case DimType::Diameter:
+        case DimType::Jogged: what = "select a circle, arc or polyline arc segment"; break;
+        case DimType::ArcLength: what = "select an arc or polyline arc segment"; break;
+        case DimType::Angular: what = "select an arc, a circle, or two lines that are not parallel"; break;
+        default: break;
+        }
+        report(std::string("Could not dimension that object -- ") + what + ".");
         return;
     }
     if (static_cast<DimType>(c.type) == DimType::Linear) {
@@ -13643,12 +13814,29 @@ void GeometryEngine::apply_fillet_polyline(Vec2 pick, double radius, double pick
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
     geom_dirty_ = true;
-    report(std::to_string(done) + " lines were filleted" +
-           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
+    report(std::to_string(done) + (done == 1 ? " line was filleted" : " lines were filleted") +
+           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short." : " were too short.")
+                        : "."));
 }
 
+namespace {
+/// CHAMFER's Angle method at one corner: the bevel leaves the first edge (direction `u1`
+/// from the corner) `d1` along it, at `angle` to it, and meets the second edge (`u2`)
+/// d1 sin(angle) / sin(angle + corner) along that one, the corner being the angle between
+/// the two edges. False when the bevel never meets the second edge.
+bool angle_method_d2(double d1, double angle, Vec2 u1, Vec2 u2, double& d2) {
+    const double corner = std::acos(std::clamp(dot(u1, u2), -1.0, 1.0));
+    const double s = std::sin(angle + corner);
+    if (s <= 1e-9) {
+        return false;
+    }
+    d2 = d1 * std::sin(angle) / s;
+    return true;
+}
+} // namespace
+
 void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
-                                            std::uint64_t group) {
+                                            std::uint64_t group, double angle) {
     const EntityHandle h = pick_nearest(pick, pick_radius);
     if (h.is_null() || h.kind != EntityKind::Polyline) {
         report("Chamfer: select a 2D polyline.");
@@ -13657,15 +13845,40 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     const PolylineData* pl = store_.polyline(h);
     const std::span<const Vec2> v = store_.vertices_of(*pl);
     std::vector<Vec2> pts(v.begin(), v.end());
+    const auto bspan = store_.bulges_of(*pl);
+    std::vector<double> bulges(bspan.begin(), bspan.end());
     const bool closed = pl->closed;
     const int n = static_cast<int>(pts.size());
     int done = 0;
     int skipped = 0;
+    int arcs = 0;
+    // Highest index first: an insert never shifts a corner still to be bevelled. A corner
+    // beside an arc segment is left as it is, and the arcs keep their bulges.
     for (int i = n - 1; i >= 0; --i) {
         if (!closed && (i == 0 || i == n - 1)) {
             continue;
         }
-        if ((dist1 > 0.0 || dist2 > 0.0) && polyline_ops::chamfer_corner(pts, closed, i, dist1, dist2)) {
+        const std::size_t corner = static_cast<std::size_t>(i);
+        const std::size_t before = (corner + static_cast<std::size_t>(n) - 1) % static_cast<std::size_t>(n);
+        if ((bulges.size() > corner && std::abs(bulges[corner]) > 1e-12) ||
+            (bulges.size() > before && std::abs(bulges[before]) > 1e-12)) {
+            ++arcs;
+            continue;
+        }
+        double d2 = dist2;
+        if (angle >= 0.0) {
+            // The first distance along the segment into the corner, the second from the
+            // corner's own angle.
+            const std::size_t m = pts.size();
+            const std::size_t at = static_cast<std::size_t>(i);
+            const Vec2 V = pts[at];
+            if (!angle_method_d2(dist1, angle, normalized(pts[(at + m - 1) % m] - V), normalized(pts[(at + 1) % m] - V),
+                                 d2)) {
+                ++skipped;
+                continue;
+            }
+        }
+        if ((dist1 > 0.0 || d2 > 0.0) && polyline_ops::chamfer_corner(pts, bulges, closed, i, dist1, d2)) {
             ++done;
         } else {
             ++skipped;
@@ -13681,12 +13894,15 @@ void GeometryEngine::apply_chamfer_polyline(Vec2 pick, double dist1, double dist
     remove_indexed(h);
     push_erase_item(group, h, orig);
     inherit_polyline(orig);
-    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
+    const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
     push_create_item(group, create_indexed(np), np);
     redo_.clear();
     geom_dirty_ = true;
-    report(std::to_string(done) + " lines were chamfered" +
-           (skipped > 0 ? ", " + std::to_string(skipped) + " were too short." : "."));
+    report(std::to_string(done) + (done == 1 ? " line was chamfered" : " lines were chamfered") +
+           (skipped > 0 ? ", " + std::to_string(skipped) + (skipped == 1 ? " was too short" : " were too short") : "") +
+           (arcs > 0 ? ", " + std::to_string(arcs) + (arcs == 1 ? " corner beside an arc was left" : " corners beside arcs were left")
+                     : "") +
+           ".");
 }
 
 // FILLET between a line and an arc/circle, or two arcs/circles. The fillet circle is
@@ -13841,7 +14057,7 @@ void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 
     if (ccw > kPi) {
         std::swap(a1, a2);
     }
-    const Command arc = AddArcCommand{best_c, radius, a1, a2, 0};
+    const Command arc = AddArcCommand{best_c, radius, a1, a2, 0, joining_props(store_, h1, h2)};
 
     // Each curve trimmed/extended to its tangent point on the pick's side.
     const auto trimmed = [&](EntityHandle h, const Curve& cv, Vec2 t, Vec2 pick) -> std::optional<Command> {
@@ -14256,7 +14472,7 @@ void GeometryEngine::apply_fillet_free(EntityHandle h1, EntityHandle h2, Vec2 pi
 }
 
 void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2,
-                                   double pick_radius, std::uint64_t group, bool trim) {
+                                   double pick_radius, std::uint64_t group, bool trim, double angle) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
     const EntityHandle h2 = pick_nearest(pick2, pick_radius);
     if (h1.is_null() || h2.is_null()) {
@@ -14277,14 +14493,36 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
             return;
         }
         const int prevseg = (sv - 1 + n) % n; // segment joining prev vertex to sv
-        double d_prev = dist2;
+        double second = dist2;
+        if (angle >= 0.0) {
+            const std::size_t at = static_cast<std::size_t>(sv);
+            const std::size_t m = v.size();
+            const Vec2 to_prev = normalized(v[(at + m - 1) % m] - v[at]);
+            const Vec2 to_next = normalized(v[(at + 1) % m] - v[at]);
+            const bool first_is_prev = s1 == prevseg;
+            if (!angle_method_d2(dist1, angle, first_is_prev ? to_prev : to_next, first_is_prev ? to_next : to_prev,
+                                 second)) {
+                report("Chamfer: the angle is too large for that corner.");
+                return;
+            }
+        }
+        double d_prev = second;
         double d_next = dist1;
         if (s1 == prevseg) {
             d_prev = dist1;
-            d_next = dist2;
+            d_next = second;
         }
         std::vector<Vec2> pts(v.begin(), v.end());
-        if (!polyline_ops::chamfer_corner(pts, pl->closed, sv, d_prev, d_next)) {
+        const auto bspan = store_.bulges_of(*pl);
+        std::vector<double> bulges(bspan.begin(), bspan.end());
+        const std::size_t sv_at = static_cast<std::size_t>(sv);
+        const std::size_t prev_at = static_cast<std::size_t>(prevseg);
+        if ((bulges.size() > prev_at && std::abs(bulges[prev_at]) > 1e-12) ||
+            (bulges.size() > sv_at && std::abs(bulges[sv_at]) > 1e-12)) {
+            report("Chamfer: an arc segment cannot be chamfered."); // as AutoCAD says no
+            return;
+        }
+        if (!polyline_ops::chamfer_corner(pts, bulges, pl->closed, sv, d_prev, d_next)) {
             report("Chamfer: distances too large for that corner.");
             return;
         }
@@ -14295,7 +14533,7 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
         remove_indexed(h1);
         push_erase_item(group, h1, orig);
         inherit_polyline(orig);
-        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, {}, cel};
+        const Command np = AddPolylineCommand{std::move(pts), closed, 0, props, std::move(bulges), cel};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
         geom_dirty_ = true;
@@ -14319,8 +14557,13 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
     Vec2 u2{};
     const Vec2 k1 = kept_endpoint(l1, P, pick1, u1);
     const Vec2 k2 = kept_endpoint(l2, P, pick2, u2);
+    double second = dist2;
+    if (angle >= 0.0 && !angle_method_d2(dist1, angle, u1, u2, second)) {
+        report("Chamfer: the angle is too large for that corner.");
+        return;
+    }
     const Vec2 t1 = P + u1 * dist1;
-    const Vec2 t2 = P + u2 * dist2;
+    const Vec2 t2 = P + u2 * second;
 
     const bool bevelled = length_squared(t1 - t2) > 1e-12; // a clean corner has no connector
     if (!trim) {
@@ -15453,6 +15696,11 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
         ltype_gen = c.p1.x != 0.0;
         what = ltype_gen ? "Linetype generation on." : "Linetype generation off.";
         break;
+    case 24: // Yes to "turn it into one?": the line or arc becomes a polyline, nothing more
+        if (!converted) {
+            return h.kind == EntityKind::Polyline ? h : EntityHandle::null();
+        }
+        break;
     case 10: { // Fit: arcs through the vertices placed, smooth at each (two per segment)
         std::vector<Vec2> base = fitted ? frame : v;
         std::vector<Vec2> nv;
@@ -15521,7 +15769,7 @@ EntityHandle GeometryEngine::pedit_one(EntityHandle h, const PeditCommand& c, bo
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    say((converted ? "Converted to a polyline. " : "") + what);
+    say(converted ? (what.empty() ? std::string("Converted to a polyline.") : "Converted to a polyline. " + what) : what);
     return nh;
 }
 
@@ -18161,6 +18409,12 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, SelectPolygonCommand>) {
                 select_where([&](EntityHandle h) { return entity_hits_polygon(h, c.points, c.crossing); },
                              c.remove, c.announce);
+                // A crossing polygon or lasso is kept for STRETCH, as a crossing window is:
+                // the vertices inside it are the ones caught.
+                if (c.crossing && c.points.size() >= 3) {
+                    stretch_polygons_.push_back(c.points);
+                    note_selection_for_windows();
+                }
             }
             if constexpr (std::is_same_v<T, SelectLastCommand>) {
                 const EntityHandle last = most_recent_live();
@@ -18456,7 +18710,7 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 array_preview_.clear();
-                apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group, c.rows, c.row_spacing);
+                apply_array_polar(c);
             }
             if constexpr (std::is_same_v<T, ExtendPickCommand>) {
                 apply_extend(c.pick, c.radius, c.group);
@@ -18465,13 +18719,13 @@ void GeometryEngine::apply_one(const Command& command) {
                 apply_fillet(c.pick1, c.pick2, c.radius, c.pick_radius, c.group, c.trim);
             }
             if constexpr (std::is_same_v<T, ChamferPickCommand>) {
-                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim);
+                apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group, c.trim, c.angle);
             }
             if constexpr (std::is_same_v<T, FilletPolylineCommand>) {
                 apply_fillet_polyline(c.pick, c.radius, c.pick_radius, c.group);
             }
             if constexpr (std::is_same_v<T, ChamferPolylineCommand>) {
-                apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group);
+                apply_chamfer_polyline(c.pick, c.dist1, c.dist2, c.pick_radius, c.group, c.angle);
             }
             if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
                 apply_object_dimension(c);
@@ -18726,7 +18980,25 @@ void GeometryEngine::apply_one(const Command& command) {
                 report("Layer \"" + c.layer.name + "\" added.");
             }
             if constexpr (std::is_same_v<T, SetLayerCommand>) {
-                store_.set_layer(c.index, c.layer);
+                // As -LAYER refuses them: a name another layer has (compared without case),
+                // and freezing the current layer.
+                Layer l = c.layer;
+                if (const Layer* old = store_.layer(c.index); old != nullptr) {
+                    if (l.name != old->name) {
+                        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.layers().size()); ++i) {
+                            if (i != c.index && same_table_name(store_.layers()[i].name, l.name)) {
+                                report("A layer named \"" + l.name + "\" already exists.");
+                                l.name = old->name;
+                                break;
+                            }
+                        }
+                    }
+                    if (l.frozen && !old->frozen && c.index == store_.current_layer()) {
+                        report("Cannot freeze the current layer.");
+                        l.frozen = false;
+                    }
+                }
+                store_.set_layer(c.index, l);
                 geom_dirty_ = true;
                 prune_selection();
             }
@@ -18995,7 +19267,7 @@ void GeometryEngine::apply_one(const Command& command) {
             if constexpr (std::is_same_v<T, InsertBlockCommand>) {
                 std::uint16_t bi = 0xFFFF;
                 for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
-                    if (store_.block(i)->name == c.name) {
+                    if (same_table_name(store_.block(i)->name, c.name)) {
                         bi = i;
                     }
                 }
@@ -21041,6 +21313,7 @@ void GeometryEngine::park_active(DocState& d) {
     d.grip_pos = grip_pos_;
     d.grip_preview_store = std::move(grip_preview_store_);
     d.stretch_windows = std::move(stretch_windows_);
+    d.stretch_polygons = std::move(stretch_polygons_);
     d.stretch_windows_sel = std::move(stretch_windows_sel_);
     d.stretch_preview_active = stretch_preview_active_;
     d.stretch_preview_delta = stretch_preview_delta_;
@@ -21090,6 +21363,7 @@ void GeometryEngine::load_active(DocState& d) {
     grip_peers_.clear(); // a drag left under way in the other drawing goes on with its own grip only
     grip_preview_store_ = std::move(d.grip_preview_store);
     stretch_windows_ = std::move(d.stretch_windows);
+    stretch_polygons_ = std::move(d.stretch_polygons);
     stretch_windows_sel_ = std::move(d.stretch_windows_sel);
     stretch_preview_active_ = d.stretch_preview_active;
     stretch_preview_delta_ = d.stretch_preview_delta;
@@ -21714,7 +21988,7 @@ void GeometryEngine::rebuild_and_publish() {
                 (void)sim.create_indexed(capture_entity(h2));
             }
             if (fp.chamfer) {
-                sim.apply_chamfer(fp.first, fp.at, fp.d1, fp.d2, fp.pick_radius, 1, fp.trim);
+                sim.apply_chamfer(fp.first, fp.at, fp.d1, fp.d2, fp.pick_radius, 1, fp.trim, fp.chamfer_angle);
             } else {
                 sim.apply_fillet(fp.first, fp.at, fp.radius, fp.pick_radius, 1, fp.trim);
             }

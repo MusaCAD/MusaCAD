@@ -122,7 +122,7 @@ TEST_CASE("#30: LIST names a circle's centre and radius") {
     engine.submit(ListQueryCommand{{12.0, 6.0}, 2.0});
     REQUIRE(status_contains(engine, "CIRCLE"));
     const std::string s = engine.snapshot().status;
-    REQUIRE(s.find("centre (5.0000,6.0000)") != std::string::npos); // UNITS default: 4 decimals
+    REQUIRE(s.find("center (5.0000,6.0000)") != std::string::npos); // UNITS default: 4 decimals
     REQUIRE(s.find("radius 7.0000") != std::string::npos);
 }
 

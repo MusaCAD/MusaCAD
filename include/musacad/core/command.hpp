@@ -132,7 +132,8 @@ struct RegenCommand {};
 /// 4 Spline (a fit spline through the vertices), 5 insert a vertex at p1, 6 delete the
 /// vertex nearest p1, 7 move the vertex nearest p1 to p2, 8 Width (p1.x is the new width
 /// of every segment), 9 the widths of the segment leaving the vertex nearest p1 (p2.x the
-/// start width, p2.y the end width). One undo group each.
+/// start width, p2.y the end width). 24 only turns a line or arc there into a polyline
+/// (the Yes to "turn it into one?"). One undo group each.
 struct PeditCommand {
     Vec2 pick{};
     double pick_radius = 0.0;
@@ -1104,6 +1105,7 @@ struct FilletPreviewCommand {
     double d1 = 0.0;
     double d2 = 0.0;
     bool active = false;
+    double chamfer_angle = -1.0; ///< CHAMFER's Angle method (radians): d2 from the corner
 };
 /// TRIM / EXTEND's cutting (boundary) edges: every object (Quick mode, or Enter at
 /// `Select objects or <select all>:`), or the current selection (Standard mode's chosen
@@ -1178,6 +1180,12 @@ struct ArrayRectCommand {
 /// Polar array of the selection: `count` copies around `center` spanning
 /// `total_angle` (radians); `rotate_items` rotates each copy to match. `rows` rings of
 /// them, each `row_spacing` farther out from the centre than the one before (ROWs).
+///
+/// The base point is the point of the selection that goes round the centre when the
+/// items are not rotated, and that the rows move out from: `base` when `has_base`;
+/// otherwise the centre of the selection's extents (ARRAY's <centroid>), or each object's
+/// own reference point when `own_anchors` (-ARRAY and the Array window, AutoCAD's classic
+/// array, without a base point).
 struct ArrayPolarCommand {
     Vec2 center;
     int count = 1;
@@ -1186,6 +1194,9 @@ struct ArrayPolarCommand {
     std::uint64_t group = 0;
     int rows = 1;
     double row_spacing = 0.0;
+    Vec2 base{};
+    bool has_base = false;
+    bool own_anchors = false;
 };
 
 /// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the
@@ -1319,6 +1330,10 @@ struct ChamferPickCommand {
     double pick_radius = 0.0;
     std::uint64_t group = 0;
     bool trim = true; ///< CHAMFER's Trim mode: false keeps the lines and only adds the bevel
+    /// The Angle method (radians, < 0: the Distance method): the bevel leaves the first
+    /// line `dist1` from the corner at this angle to it, and `dist2` is worked out from
+    /// the corner's own angle.
+    double angle = -1.0;
 };
 
 /// CHAMFER [Polyline]: every corner of the polyline under the pick bevelled by the two
@@ -1329,6 +1344,7 @@ struct ChamferPolylineCommand {
     double dist2 = 0.0;
     double pick_radius = 0.0;
     std::uint64_t group = 0;
+    double angle = -1.0; ///< the Angle method, as ChamferPickCommand's
 };
 
 /// Persistence (geometry-thread). `dxf` selects the DXF codec over the native

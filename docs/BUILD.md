@@ -1,195 +1,22 @@
 # Building Musa CAD
 
-Musa CAD is designed to be **clone-and-build**. Aside from a small set of
-unavoidable system prerequisites (a C++23 compiler, Qt6, and the Vulkan
-loader/headers), everything else is provided by the build system.
+How to build Musa CAD on Linux, Windows and macOS -- the presets, DWG support through an
+external converter, the sanitizers and the headless smoke test -- is on the wiki:
+
+* **Building:** https://wiki.musacad.org/developer/building/
+* **Packaging** (the AppImage, the Flatpak, the Windows installer, the macOS disk image):
+  https://wiki.musacad.org/developer/packaging/
+
+Offline, the short version. You need a C++23 compiler (GCC 13+, Clang 17+ or MSVC 19.38+),
+CMake 3.25+, Ninja and Qt 6.4+; on Debian or Ubuntu:
 
 ```sh
-cmake --preset dev          # configure (Debug + ASan/UBSan + tests)
-cmake --build --preset dev  # build
+sudo apt-get install -y build-essential cmake ninja-build qt6-base-dev libvulkan-dev
 ```
 
-The runnable lands at `build/dev/bin/musacad_app`.
-
-For an optimized build:
+Then:
 
 ```sh
-cmake --preset release
-cmake --build --preset release
-```
-
-## System prerequisites
-
-| Prerequisite        | Minimum | Notes |
-|---------------------|---------|-------|
-| C++23 compiler      | GCC 13+, Clang 17+, or MSVC 19.38+ (VS 2022 17.8) | `-std=c++23`, no extensions |
-| CMake               | 3.25+   | Presets v6 |
-| Ninja               | 1.10+   | Default generator in the presets |
-| Qt6 (Core/Gui/Widgets) | 6.4+ | UI frame and event loop |
-| Vulkan SDK / loader | 1.3+    | GPU backend (used from Phase 3); headers + loader required to configure |
-
-### Linux (Debian/Ubuntu)
-
-```sh
-sudo apt-get install -y build-essential cmake ninja-build \
-    qt6-base-dev libvulkan-dev
-```
-
-For GPU rendering at runtime you also need working Vulkan drivers
-(`mesa-vulkan-drivers` for Intel/AMD, or the NVIDIA proprietary driver).
-
-### Windows
-
-* Visual Studio 2022 (17.8+) with the "Desktop development with C++" workload
-  (the Build Tools edition is enough; add the "C++ AddressSanitizer" component for
-  the `dev` preset).
-* CMake and Ninja (bundled with VS, or install standalone).
-* Qt6 — install via the [Qt online installer](https://www.qt.io/download), or
-  with [aqtinstall](https://github.com/miurahr/aqtinstall) exactly as CI does
-  (`aqt install-qt windows desktop 6.8.1 win64_msvc2022_64 -m qtimageformats`),
-  and point CMake at it with `-DCMAKE_PREFIX_PATH=C:/Qt/6.8.1/msvc2022_64`; or use a
-  vcpkg manifest.
-* Vulkan SDK from [LunarG](https://vulkan.lunarg.com/) — optional; see the note in
-  the top-level `CMakeLists.txt` (the OpenGL backend is what gets built).
-
-Build from an **x64 Native Tools Command Prompt** (or after `vcvars64.bat`), so the
-Ninja presets find `cl`:
-
-```bat
-cmake --preset release -DCMAKE_PREFIX_PATH=C:/Qt/6.8.1/msvc2022_64
-cmake --build --preset release
-```
-
-The build tree has no Qt DLLs next to the executables: to run anything from it, put
-`C:\Qt\6.8.1\msvc2022_64\bin` on `PATH` (CTest gets it from the configured Qt by
-itself). The Windows build produces two programs in `build\<preset>\bin`:
-`musacad_app.exe`, the windowed application, and `musacad.exe`, the console front-end
-for scripts — see [docs/CLI.md](CLI.md). The shipped installer is assembled by
-`.github/workflows/build-windows.yml` (`windeployqt` + NSIS).
-
-## Dependency strategy
-
-* **Qt6** and **Vulkan** are located with `find_package` and are the only
-  unavoidable manual installs (table above).
-* **Geometry math** uses our own `Vec`/`Mat` types (no `glm`); introduced in
-  Phase 2.
-* **Catch2** (unit tests) is fetched via CMake `FetchContent` and wired in
-  Phase 2. Tests build only when `MUSACAD_BUILD_TESTS=ON` (the `dev` preset
-  sets it).
-
-No geometry/CAD kernel is a dependency: Musa CAD ships its own native 2D
-kernel behind the `IGeometryKernel` interface.
-
-## DWG import/export (optional external converter)
-
-DWG support is **not built in** and adds **no build dependency**. Musa CAD is
-LGPL; the DWG converters are GPL (LibreDWG) or proprietary (ODA File Converter),
-so Musa CAD never links, bundles, or vendors them. Instead it *invokes a converter*
-as a subprocess and reads the DXF it produces — the licensing boundary is a process
-boundary, keeping Musa CAD's code and shipped binaries GPL-free.
-
-The quickest way to get one is the **"Download ODA File Converter…"** button in
-**DWG Setup** (File panel), also offered when Import/Export DWG finds no converter.
-After you accept the Open Design Alliance's terms, Musa CAD downloads the current
-release from opendesign.com (about 100 MB on Linux, 33 MB on Windows, 80 MB on macOS),
-unpacks it into its own data directory (`<app data>/converters/oda`) and uses it from
-then on; **"Remove downloaded"** deletes it again. The converter needs an X11 display on
-Linux (it runs under XWayland on a Wayland session).
-
-Or install one yourself and Musa CAD auto-detects it on `PATH`:
-
-* **ODA File Converter** (free, from opendesign.com) — put `ODAFileConverter` on
-  your `PATH`, or
-* **LibreDWG** (`dwg2dxf` / `dxf2dwg`) — e.g. `sudo apt-get install libredwg-bin`,
-  or build from source; put `dwg2dxf` on your `PATH`.
-
-**DWG Setup** shows what was detected and lets you **Browse** to a specific binary (or
-a custom wrapper invoked as `converter <in> <out>`) or auto-detect on `PATH` — it saves
-the `io/dwg_converter_path` setting for you. Nothing crashes without a converter: the
-dialog explains, and DXF works regardless.
-
-**Flatpak:** the download works there too (the sandbox has network access for it). The
-converter needs an X11 display: under an X11 session it runs inside the sandbox; under
-Wayland the sandbox has no display, so it runs outside the sandbox through the Flatpak
-portal, which you allow once with
-`flatpak override --user --talk-name=org.freedesktop.Flatpak org.musacad.MusaCAD` (the
-dialog says so). A converter installed on your system is used the same way with **"Use a
-converter installed on the host"**. See `packaging/flatpak/BUILD_FLATPAK.md`.
-
-## Sanitizers
-
-The `dev` preset sets `ENABLE_SANITIZERS=ON`, enabling AddressSanitizer and
-UndefinedBehaviorSanitizer (GCC/Clang) or AddressSanitizer (MSVC) across all
-targets.
-
-### ThreadSanitizer (`tsan` preset)
-
-For the concurrency tests (triple-buffer handoff, MPSC queue), a separate
-`tsan` preset builds with ThreadSanitizer (mutually exclusive with ASan/UBSan):
-
-```sh
-cmake --preset tsan && cmake --build --preset tsan
-ctest --preset tsan
-```
-
-On recent Linux kernels TSan can abort at startup with
-`FATAL: ThreadSanitizer: unexpected memory mapping` because the default ASLR
-entropy is higher than TSan's shadow-memory layout expects. If you hit this,
-lower it for the session:
-
-```sh
-sudo sysctl -w vm.mmap_rnd_bits=28
-```
-
-**Without root**, disable ASLR for the process instead — the personality is
-inherited by children, so wrapping the build *and* `ctest` works (the build needs it
-too, because Catch2 runs the test binary to discover test cases):
-
-```sh
-setarch "$(uname -m)" -R cmake --build --preset tsan
-setarch "$(uname -m)" -R ctest --preset tsan
-```
-
-### Third-party TSan noise (`tools/tsan.supp`)
-
-`cli_check` is the only test that **executes the Qt application binary**, so it is the
-only one that meets Qt/glib's own races: constructing a `QGuiApplication` on Linux
-starts a `QDBusConnection` thread that races with glib's event loop inside
-`libglib-2.0`/`libQt6DBus`, with no Musa CAD frame in either stack (and with every
-platform plugin, so the headless plot path cannot avoid it). `tests/CMakeLists.txt`
-points `TSAN_OPTIONS=suppressions=tools/tsan.supp` at **that test only** — the
-concurrency tests (triple buffer, MPSC queue, engine) still run with no suppressions,
-so a race in our own code still fails the run.
-
-(Clang's TSan needs a `libstdc++`/`libc++` it can link; GCC works out of the
-box and is what these presets assume.)
-
-### CI note (important)
-
-A CI runner that builds the `tsan` preset **must** lower the ASLR entropy before
-running the TSan binaries, or they abort with
-`FATAL: ThreadSanitizer: unexpected memory mapping`:
-
-```sh
-sudo sysctl -w vm.mmap_rnd_bits=28   # once per runner/boot, before ctest --preset tsan
-```
-
-For the **ASan smoke run of the GUI app** (`MUSACAD_SMOKE=1 musacad_app`), the
-windowing/driver stack (libwayland, the Qt platform plugin, Mesa) reports its
-own leaks that are not Musa CAD's. Point LeakSanitizer at the suppression file
-so only our leaks surface:
-
-```sh
-MUSACAD_SMOKE=1 \
-  LSAN_OPTIONS=suppressions=tools/lsan.supp \
-  ./build/dev/bin/musacad_app
-```
-
-## Headless / CI smoke test
-
-Setting `MUSACAD_SMOKE` makes the app show its window and quit promptly, so a
-clean, leak-free startup can be verified without a display:
-
-```sh
-MUSACAD_SMOKE=1 QT_QPA_PLATFORM=offscreen ./build/dev/bin/musacad_app
+cmake --preset release && cmake --build --preset release   # build/release/bin/musacad_app
+cmake --preset dev && cmake --build --preset dev           # Debug, ASan/UBSan and the tests
 ```

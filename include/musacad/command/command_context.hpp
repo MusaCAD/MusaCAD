@@ -220,6 +220,7 @@ struct PreviewSpec {
     bool fillet_chamfer = false;
     double chamfer_d1 = 0.0;
     double chamfer_d2 = 0.0;
+    double chamfer_angle = -1.0; ///< CHAMFER's Angle method (radians), else < 0
     /// TRIM / EXTEND at the object prompt: the viewport streams the cursor and the engine
     /// draws the part a pick there would trim away (or add, `trim_extend`; Shift swaps).
     bool trim_hover = false;

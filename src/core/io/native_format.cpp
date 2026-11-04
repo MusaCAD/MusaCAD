@@ -1227,7 +1227,7 @@ std::string serialize_native(const Document& doc) {
     }
     // v14: HATCH. One line: loop count, then each loop (vertex count + x y pairs), then
     // scale, angle(radians), origin, props. The pattern name is on the next line.
-    for (const DocHatch& h : doc.hatches) {
+    const auto emit_hatch = [&](const DocHatch& h) {
         s += "HATCH ";
         append_uint(s, h.loops.size());
         for (const std::vector<Vec2>& loop : h.loops) {
@@ -1261,6 +1261,9 @@ std::string serialize_native(const Document& doc) {
         if (h.iso) {
             s += "HATCHISO\n"; // v41: its standard pattern at acadiso.pat's size
         }
+    };
+    for (const DocHatch& h : doc.hatches) {
+        emit_hatch(h);
     }
     // v31: paper-space viewports.
     for (const DocViewport& v : doc.viewports) {
@@ -1420,6 +1423,9 @@ std::string serialize_native(const Document& doc) {
         }
         for (const DocInsert& ni : b.inserts) {
             emit_insert_rec(ni);
+        }
+        for (const DocHatch& h : b.hatches) { // v46
+            emit_hatch(h);
         }
     };
     for (const DocInsert& ins : doc.inserts) {
@@ -1922,6 +1928,7 @@ IoResult parse_native(std::string_view text, Document& out) {
     std::vector<DocAttDef>* t_attdefs = &doc.attdefs;
     std::vector<DocMText>* t_mtexts = &doc.mtexts;
     std::vector<DocInsert>* t_inserts = &doc.inserts;
+    std::vector<DocHatch>* t_hatches = &doc.hatches;
     const auto target_model = [&] {
         t_lines = &doc.lines;
         t_circles = &doc.circles;
@@ -1931,6 +1938,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_attdefs = &doc.attdefs;
         t_mtexts = &doc.mtexts;
         t_inserts = &doc.inserts;
+        t_hatches = &doc.hatches;
     };
     const auto target_block = [&] {
         t_lines = &cur_block.lines;
@@ -1941,6 +1949,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_attdefs = &cur_block.attdefs;
         t_mtexts = &cur_block.mtexts;
         t_inserts = &cur_block.inserts;
+        t_hatches = &cur_block.hatches;
     };
 
     const auto fail = [&](const std::string& why) {
@@ -2870,15 +2879,15 @@ IoResult parse_native(std::string_view text, Document& out) {
             }
             doc.mleaders.back().leader_flags = static_cast<std::uint8_t>(v);
         } else if (key == "HATCHNOASSOC") {
-            if (doc.hatches.empty()) {
+            if (t_hatches->empty()) {
                 return fail("HATCHNOASSOC without a HATCH");
             }
-            doc.hatches.back().unassoc = true;
+            t_hatches->back().unassoc = true;
         } else if (key == "HATCHISO") {
-            if (doc.hatches.empty()) {
+            if (t_hatches->empty()) {
                 return fail("HATCHISO without a HATCH");
             }
-            doc.hatches.back().iso = true;
+            t_hatches->back().iso = true;
         } else if (key == "DIMNOASSOC") {
             if (doc.dims.empty()) {
                 return fail("DIMNOASSOC without a DIM");
@@ -3514,7 +3523,7 @@ IoResult parse_native(std::string_view text, Document& out) {
                 pat.pop_back();
             }
             h.pattern_name = unescape(pat);
-            doc.hatches.push_back(std::move(h));
+            t_hatches->push_back(std::move(h));
         } else if (key == "POINT") {
             EntityProps p;
             if (!read_fixed(tok, 2, p)) {

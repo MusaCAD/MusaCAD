@@ -9,6 +9,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 ## Unreleased
 
 ### Added
+- **Hatches inside blocks** -- fills and patterns in a block definition are drawn wherever
+  the block is inserted, turned and scaled with it, and FILLMODE applies. A DWG or DXF brings
+  them in (445 of them in one production drawing), SOLID inside a block is filled, and
+  BLOCK, EXPLODE, REFEDIT, WBLOCK and copying between drawings carry them. Saved in the
+  drawing (format v46) and in DXF.
+- **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
+- **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
+  offers, negative for Through).
 - **`musacad --dump-wiki-data <out.json>`** -- the facts the Musa CAD Wiki generates its
   reference pages from, read off the program itself: every command with its aliases,
   description, icon and what it says when it starts (the prompt, with the real defaults of a
@@ -21,9 +29,72 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `system_variable_names()` (`command/sysvars.hpp`), shared by SETVAR and the export.
 
 ### Changed
+- ARRAYPATH's default base point is the end of the path curve, as its prompt says: the
+  selection stays where it is as the first item and the copies keep its offset from the
+  path; a base point of your own goes on the path with the selection (#90).
+- A polar array goes round by one base point for the whole selection -- the one given
+  (ARRAY's Base point, -ARRAY's Base), else the centre of the selection -- so items that are
+  not rotated keep their arrangement (#90).
+- ROTATE's typed angles go the way ANGDIR says (#90).
+- Block names are compared without case, as AutoCAD compares them (#92).
+- The selection and grip settings (PICKBOX, PICKADD, PICKDRAG ...) are kept between
+  sessions (#92).
+- The contextual tab for one selected block reference is called **Block Reference**; Block
+  Editor is the tab shown while BEDIT is open (#86). The Hatch Editor tab's **Pick Points**
+  adds areas to the selected hatch (HATCHEDIT Add boundaries) (#92).
+- The [plot-spec] line of each plot goes to stderr, not the command line (#91).
 - The keyboard shortcuts for the clipboard, the drawing tabs and closing a drawing are named,
   so CUI says what a key is used for when you try to take it ("Ctrl+W is used by Close the
   drawing").
+
+### Fixed
+- **Opening a DWG or DXF no longer draws lines to the origin** (#93). Radius and diameter
+  dimensions were read from groups that only linear ones have, so each one took (0,0) as its
+  centre and drew a line from the drawing to the origin -- 300 such lines in one production
+  drawing, removable only one dimension at a time. Each dimension type is now read from its
+  own groups: radius (centre and point on the arc), diameter (two opposite points),
+  two-line angular (the vertex where the lines cross, and the sides the arc lies between)
+  and three-point angular. DXF export writes them the same way, so AutoCAD reads Musa CAD's
+  radial and angular dimensions correctly; files written by earlier versions keep their
+  meaning.
+- Dimensions from AutoCAD keep their text -- `<> (TYP)`, `%%C<>`, `AS PER PID`, a second
+  line under the first -- their own text height, arrow size, decimals, colours and
+  tolerances (the DSTYLE overrides), text the author moved, and DIMSCALE (#93).
+- A leader with a bend keeps every vertex; MULTILEADER comes in with its line, landing and
+  text; SOLID and TRACE are filled; MINSERT places its whole grid; arcs, circles, ellipses,
+  polylines, hatches and block references drawn mirrored (a reversed extrusion) land where
+  AutoCAD shows them. Inside a block, a dimension draws as the drawing has it, and a leader
+  or multileader as its lines and text (#93).
+- Opening a drawing no longer loads the blocks AutoCAD keeps for each dimension's drawn
+  form (1,336 blocks down to 337 in one drawing) (#93).
+- **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
+- Closing the window read the Dynamic Input settings from freed memory (#87).
+- Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
+  Inscribed / Circumscribed, MLEADER's leader type, a dimension's Text, ARRAY's angles (360
+  for a full circle), STRETCH's displacement (the last one); PLINE's Close works from the
+  first segment, where it is offered; ARRAY's Levels take Total; ARC's Continue and Direction
+  read Ctrl (#90).
+- The dimensions made from an object and TEXTEDIT say what happened once, after the engine
+  has checked; the reason a pick cannot be dimensioned names what that dimension takes;
+  CIRCLE Ttr's radius in the drawing's units; LIST says center (#91).
+- CHAMFER and BREAK keep a polyline's arc segments; CHAMFER's Angle method is exact at any
+  corner, not only a square one; FILLET's arc between curves takes the objects' layer;
+  ROTATE and SCALE copies go over the rest; STRETCH stretches what a lasso or crossing
+  polygon catches and takes C and CP (#92).
+- MATCHPROP no longer copies a dimension's overrides under Hatch; its settings window has
+  Transparency and Polyline (#92).
+- The ribbon's Zoom In / Zoom Out zoom by the current view; repeating HATCH with the hatch
+  just made selected asks for points instead of failing; Plot Preview's Plot... keeps the
+  settings previewed, and PLOT keeps an orientation that was chosen (#92).
+- The Layer Properties Manager refuses a name in use and freezing the current layer (#92).
+- FILLET and CHAMFER's Undo takes back each corner of the run; DIMCONTINUE's Undo no longer
+  counts a pick that made nothing; MLEADER's "No limit" maximum points; PEDIT makes the
+  polyline at the Yes; the Dimension Style Manager's Rename checks the characters; DIMZIN
+  keeps its feet-and-inches bits; \P typed at MTEXT is a paragraph break (#92).
+
+### Documentation
+- docs/BUILD.md is a short version of the wiki's Building page (#88); COMMANDS.md,
+  AUTOCAD_CONFIG.md and ROADMAP.md say what the program does now (#89).
 
 ## 0.8.0 - 2026-10-23
 

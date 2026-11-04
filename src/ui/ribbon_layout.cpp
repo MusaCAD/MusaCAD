@@ -193,7 +193,15 @@ void MainWindow::build_ribbon() {
     connect(qat_undo, &QAction::triggered, this, [this] { processor_->undo(); });
     qat_items.emplace_back(QStringLiteral("Undo"), ribbon_->add_qat_action(qat_undo));
     auto* qat_redo = new QAction(ribbon_icon(QStringLiteral("assets/ribbon/redo.svg")), QStringLiteral("Redo"), this);
-    qat_redo->setShortcut(QKeySequence::Redo);
+    // Ctrl+Y as in AutoCAD, on every platform, then the platform's own Redo keys
+    // (Ctrl+Shift+Z on KDE and GNOME, where QKeySequence::Redo has no Ctrl+Y).
+    QList<QKeySequence> redo_keys{QKeySequence(Qt::CTRL | Qt::Key_Y)};
+    for (const QKeySequence& k : QKeySequence::keyBindings(QKeySequence::Redo)) {
+        if (!redo_keys.contains(k)) {
+            redo_keys.push_back(k);
+        }
+    }
+    qat_redo->setShortcuts(redo_keys);
     qat_redo->setShortcutContext(Qt::ApplicationShortcut);
     connect(qat_redo, &QAction::triggered, this, [this] { processor_->redo(); });
     qat_items.emplace_back(QStringLiteral("Redo"), ribbon_->add_qat_action(qat_redo));
@@ -1110,8 +1118,8 @@ void MainWindow::build_ribbon() {
         tag(ze, "Z", {"E"});
         connect(ze, &QAction::triggered, this, [this] { viewport_->zoom_extents(); });
         zoom_menu->addAction(macro(QStringLiteral("Zoom All"), "Z", {"A"}));
-        zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2"}));
-        zoom_menu->addAction(macro(QStringLiteral("Zoom Out"), "Z", {"0.5"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2x"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Out"), "Z", {"0.5x"}));
         zoom_menu->addAction(action("Z", QStringLiteral("Zoom Scale")));
         QToolButton* zoom = nav->add_dropdown(asset("zoom"), QStringLiteral("Zoom"), zoom_menu, /*split=*/true, RibbonTier::Primary);
         zoom->setObjectName(QStringLiteral("ribbon.cmd.Z"));

@@ -177,6 +177,7 @@ private:
         Vec2 grip_pos{};
         GeometryStore grip_preview_store;
         std::vector<std::pair<Vec2, Vec2>> stretch_windows;
+        std::vector<std::vector<Vec2>> stretch_polygons;
         std::vector<EntityHandle> stretch_windows_sel;
         bool stretch_preview_active = false;
         Vec2 stretch_preview_delta{};
@@ -289,6 +290,7 @@ private:
     void note_selection_for_windows() { stretch_windows_sel_ = selection_; }
     void forget_stretch_windows() {
         stretch_windows_.clear();
+        stretch_polygons_.clear();
         stretch_windows_sel_.clear();
     }
 
@@ -550,7 +552,7 @@ private:
     void explode_new_dimensions();
     EntityProps current_props_{}; ///< CECOLOR / CELTYPE / CELWEIGHT: fresh objects' overrides
     void apply_chamfer_polyline(Vec2 pick, double dist1, double dist2, double pick_radius,
-                                std::uint64_t group);
+                                std::uint64_t group, double angle = -1.0);
     /// One stretched entity: the handle it replaces and the edit that replaces it.
     struct StretchEdit {
         EntityHandle handle;
@@ -669,8 +671,7 @@ private:
     /// One and a half times the selection's width and height (either from the other when it
     /// has none): an array's default spacing.
     [[nodiscard]] Vec2 array_default_spacing() const;
-    void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
-                           std::uint64_t group, int rows = 1, double row_spacing = 0.0);
+    void apply_array_polar(const ArrayPolarCommand& c);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);
     void apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                       std::uint64_t group, bool trim = true);
@@ -679,7 +680,7 @@ private:
     void apply_fillet_join(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2, double radius,
                            std::uint64_t group, bool trim);
     void apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double dist2, double pick_radius,
-                       std::uint64_t group, bool trim = true);
+                       std::uint64_t group, bool trim = true, double angle = -1.0);
     // Object-aware dimensioning: resolve the entity(ies) under the pick(s) via the
     // spatial index + selectable() gate and build the matching dimension from their
     // intrinsic geometry. The dimension captures DEF POINTS only (no entity ref), so
@@ -843,6 +844,7 @@ private:
     // while `stretch_windows_sel_` still equals `selection_`: any edit that replaces the
     // selection invalidates them without every such site having to know.
     std::vector<std::pair<Vec2, Vec2>> stretch_windows_;
+    std::vector<std::vector<Vec2>> stretch_polygons_; ///< crossing polygons and lassos, the same
     std::vector<EntityHandle> stretch_windows_sel_;
     // The live rubber-band (StretchPreviewCommand): previewed on grip_preview_store_.
     bool stretch_preview_active_ = false;
@@ -874,6 +876,7 @@ private:
     mutable std::uint64_t stretch_class_serial_ = 0;
     mutable std::vector<EntityHandle> stretch_class_handles_;
     mutable std::vector<std::pair<Vec2, Vec2>> stretch_class_windows_;
+    mutable std::vector<std::vector<Vec2>> stretch_class_polygons_;
     mutable std::vector<bool> stretch_class_crossed_;
 
     std::atomic<std::uint64_t> version_{0};

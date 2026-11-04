@@ -504,6 +504,13 @@ CommandRegistry CommandRegistry::make_default() {
     var("CHAMFERD", "CHAMFER's angle from the first line, by the Angle method.",
         {"", true, 0.0, 0.0, [](CommandContext&) { return ChamferCommand::chamferd(); },
          [](CommandContext&, double v) { ChamferCommand::chamferd() = v; }, true});
+    var("CHAMMODE", "CHAMFER's method: 0 two distances, 1 a length and an angle.",
+        {"", false, 0.0, 1.0, [](CommandContext&) { return ChamferCommand::chammode() ? 1.0 : 0.0; },
+         [](CommandContext&, double v) { ChamferCommand::chammode() = v != 0.0; }});
+    var("OFFSETDIST", "The distance OFFSET offers; a negative value offers Through.",
+        {"", true, -1e300, 0.0,
+         [](CommandContext&) { return OffsetCommand::offsetdist() > 0.0 ? OffsetCommand::offsetdist() : -1.0; },
+         [](CommandContext&, double v) { OffsetCommand::offsetdist() = v > 0.0 ? v : 0.0; }});
     reg({"DIMDISASSOCIATE", "DDA"}, [] { return std::make_unique<DimDisassociateCommand>(); }, "",
         "Dimensions no longer follow the objects they measure.");
     reg({"DIMREASSOCIATE", "DRE"}, [] { return std::make_unique<DimDisassociateCommand>(true); }, "",
@@ -544,7 +551,7 @@ CommandRegistry CommandRegistry::make_default() {
     reg({"IAT", "IMAGEATTACH", "-IMAGEATTACH"}, [] { return std::make_unique<ImageAttachCommand>(); }, "",
         "Attach a raster image (PNG, JPEG, BMP, ...): file, embed or reference, insertion point, scale, rotation.");
     reg({"ICL", "IMAGECLIP"}, [] { return std::make_unique<ImageClipCommand>(); }, "",
-        "Clip an image to a rectangular boundary, or delete, switch on or off its boundary.");
+        "Clip an image to a rectangular or polygonal boundary, or delete, switch on or off its boundary.");
     reg({"ISOPLANE"}, [] { return std::make_unique<IsoPlaneCommand>(false); }, "",
         "The isometric plane: Left, Top or Right (F5 cycles them).");
     reg({"ISODRAFT"}, [] { return std::make_unique<IsoPlaneCommand>(true); }, "",

@@ -93,7 +93,7 @@ a paper-space viewport is shown whole or not at all today).
   fly-out popout) + contextual tabs (Hatch/Text/Block editors, family-predicate driven,
   accent stripe) (B). See `docs/ARCHITECTURE.md` ▸ "Ribbon Phase B".
 * **Block authoring — DONE (#25).** BLOCK / WBLOCK / EXPLODE / REFEDIT / ATTDEF / EATTEDIT /
-  BATTMAN / XREF; the Block Editor contextual tab starts REFEDIT and the attribute dialogs.
+  BATTMAN / XREF; the Block Reference contextual tab starts REFEDIT and the attribute dialogs.
   **Staged:** a Block Editor *mode* of its own (BEDIT, editing the definition at the origin
   rather than in place) and multi-line attributes.
 * **Contextual control depth — staged.** The Hatch/Text editors expose the common controls

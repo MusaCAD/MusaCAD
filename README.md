@@ -45,7 +45,7 @@ targeting a smooth 144 Hz+ viewport.
   `F10` polar, `F11` object snap tracking, `F12` dynamic input, `Ctrl+Z` / `Ctrl+Y`.
 - **DXF read/write** built in; **DWG import/export** via an external converter (ODA
   File Converter, downloadable from DWG Setup, or LibreDWG) — invoked as a subprocess, never linked,
-  so Musa CAD stays LGPL-clean. See [docs/BUILD.md](docs/BUILD.md).
+  so Musa CAD stays LGPL-clean. See [Building](https://wiki.musacad.org/developer/building/) on the wiki.
 
 ---
 
@@ -109,8 +109,9 @@ cmake --build --preset dev
 
 The app lands at `build/dev/bin/musacad_app`. For an optimized build use the
 `release` preset. Full prerequisites (a C++23 compiler, CMake 3.25+, Qt6, the
-Vulkan loader/headers) and the ThreadSanitizer / CI notes are in
-[docs/BUILD.md](docs/BUILD.md).
+Vulkan loader/headers), Windows and macOS, and the ThreadSanitizer / CI notes are on the
+wiki's [Building](https://wiki.musacad.org/developer/building/) page
+([docs/BUILD.md](docs/BUILD.md) has the short version).
 
 Run the tests:
 

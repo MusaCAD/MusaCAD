@@ -206,6 +206,8 @@ set(_musacad_test_files
     test_xref.cpp
     test_image_polyclip.cpp
     test_dxf_image.cpp
+    test_dxf_dimensions.cpp
+    test_block_hatches.cpp
     test_external_files.cpp
     test_update_channel.cpp
     test_fonts.cpp
@@ -231,7 +233,8 @@ set(_musacad_test_files
     test_wipeout_attsync.cpp
     test_mleader_restyle.cpp
     test_spline_fit_points.cpp
-    test_draw_order.cpp)
+    test_draw_order.cpp
+    test_command_pages.cpp)
 
 set(_musacad_test_binaries "")
 list(LENGTH _musacad_test_files _musacad_n)

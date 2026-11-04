@@ -26,6 +26,7 @@
 #include "musacad/core/spline_eval.hpp"
 #include "musacad/core/math/tangent_circle.hpp"
 #include "musacad/core/text/justify.hpp"
+#include "musacad/core/text/mtext.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -540,8 +541,14 @@ void PolylineCommand::prompt_next(CommandContext& ctx) {
     }
     state_ = State::Next;
     refresh_preview(ctx, 0);
-    ctx.set_prompt(points_.size() >= 2 ? "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: "
-                                       : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
+    ctx.set_prompt(can_close() ? "Specify next point or [Arc/Close/Halfwidth/Length/Undo/Width]: "
+                               : "Specify next point or [Arc/Halfwidth/Length/Undo/Width]: ");
+}
+
+// Close is offered from the first segment, as in AutoCAD: after one straight segment the
+// closing segment runs back over it, and after an arc it makes a shape.
+bool PolylineCommand::can_close() const {
+    return points_.size() >= 2;
 }
 
 void PolylineCommand::add_segment(CommandContext& ctx, core::Vec2 end, double bulge, double end_tangent) {
@@ -660,12 +667,12 @@ void PolylineCommand::input(CommandContext& ctx, const std::string& text) {
             prompt_next(ctx);
             return;
         }
-        if ((u == "C" || u == "CLOSE") && points_.size() >= 3) {
+        if ((u == "C" || u == "CLOSE") && can_close()) {
             finish(ctx, true);
             return;
         }
         if (u == "C" || u == "CLOSE") {
-            ctx.echo("Need at least 3 points to close.");
+            ctx.echo("Need at least 2 points to close.");
             return;
         }
         if (u == "L" || u == "LENGTH") {
@@ -1180,13 +1187,16 @@ void ArcCommand::input(CommandContext& ctx, const std::string& text) {
             commit(ctx, core::arc_start_end_angle(s_, e_, positive_turn(bearing_of(s_, *p)), ctrl));
         }
         return;
-    case State::EndDirection:
+    case State::EndDirection: {
+        // Ctrl: the other arc of the same circle, which leaves the start the other way.
+        const double flip = ctrl ? core::kPi : 0.0;
         if (parse_number(t, v)) {
-            commit(ctx, core::arc_start_end_direction(s_, e_, core::to_radians(v)));
+            commit(ctx, core::arc_start_end_direction(s_, e_, core::to_radians(v) + flip));
         } else if (const auto p = read_point(ctx, text)) {
-            commit(ctx, core::arc_start_end_direction(s_, e_, bearing_of(s_, *p)));
+            commit(ctx, core::arc_start_end_direction(s_, e_, bearing_of(s_, *p) + flip));
         }
         return;
+    }
     case State::EndRadius:
         if (parse_number(t, v)) {
             commit(ctx, core::arc_start_end_radius(s_, e_, v, ctrl));
@@ -1214,7 +1224,8 @@ void ArcCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::ContinueEnd:
         if (const auto p = read_point(ctx, text)) {
-            commit(ctx, core::arc_start_end_direction(s_, *p, tangent_));
+            // Ctrl: the other arc of the same circle, leaving against the last segment.
+            commit(ctx, core::arc_start_end_direction(s_, *p, tangent_ + (ctrl ? core::kPi : 0.0)));
         }
         return;
     }
@@ -1529,7 +1540,8 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         // The other side from the area of the finished shape: the corner treatment's
-        // cut-outs are added back before dividing.
+        // cut-outs are added back before dividing (both positive, so the side is too; corners
+        // that do not fit the result are left square, as rectangle_outline does).
         const double gross = area_ + corner_loss();
         if (area_by_length_) {
             length_ = v;
@@ -1537,11 +1549,6 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         } else {
             width_ = v;
             length_ = gross / v;
-        }
-        if (!(length_ > 0.0) || !(width_ > 0.0)) {
-            ctx.echo("The area is too small for that side with the current corner treatment.");
-            revert_to_corner();
-            return;
         }
         s_length_ = length_;
         s_width_ = width_;
@@ -2851,8 +2858,12 @@ void HatchCommand::start(CommandContext& ctx) {
         ctx.echo("Pattern: GRADIENT");
     }
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
-    // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
-    if (ctx.has_selection()) {
+    // objects" mode). Otherwise the default is AutoCAD's "Pick internal point". A
+    // selection of hatches alone (the one just made, when HATCH is repeated) has no
+    // boundary to fill: it is let go.
+    if (ctx.has_selection() && ctx.selection_kinds() == (1u << static_cast<unsigned>(core::EntityKind::Hatch))) {
+        ctx.submit(core::ClearSelectionCommand{});
+    } else if (ctx.has_selection()) {
         ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_, extras()});
         done_ = true;
         return;
@@ -4325,6 +4336,13 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     double deg = 0.0;
+    // Typed angles go the way ANGDIR says, as the line ROTATE starts with tells: the
+    // rotation angle as an amount of turn, the reference and new angles as directions
+    // (from ANGBASE). Picked points are plain bearings.
+    const core::DrawingUnits units = ctx.units();
+    const double sense = units.clockwise ? -1.0 : 1.0;
+    const auto typed_turn = [&](double d) { return sense * core::to_radians(d); };
+    const auto typed_dir = [&](double d) { return units.base_angle + sense * core::to_radians(d); };
     switch (state_) {
     case State::Select:
         if (select_.active() && select_.input(ctx, text) == SelectObjectsPhase::Result::Continue) {
@@ -4362,7 +4380,7 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (parse_number(t, deg)) {
-            commit(ctx, core::to_radians(deg)); // a typed number is degrees
+            commit(ctx, typed_turn(deg)); // a typed number is degrees
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -4373,9 +4391,9 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::RefAngle:
         if (t.empty()) {
-            ref_angle_ = 0.0;
+            ref_angle_ = typed_dir(0.0);
         } else if (parse_number(t, deg)) {
-            ref_angle_ = core::to_radians(deg);
+            ref_angle_ = typed_dir(deg);
         } else if (const auto p = read_point(ctx, text)) {
             first_ = *p; // two points define the reference angle
             state_ = State::RefSecond;
@@ -4404,11 +4422,11 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (t.empty()) {
-            commit(ctx, -ref_angle_); // the default new angle, 0
+            commit(ctx, typed_dir(0.0) - ref_angle_); // the default new angle, 0
             return;
         }
         if (parse_number(t, deg)) {
-            commit(ctx, core::to_radians(deg) - ref_angle_);
+            commit(ctx, typed_dir(deg) - ref_angle_);
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -6852,13 +6870,23 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
             } else if (ctx.input_is_pick() && ctx.hovered_kind().has_value()) {
                 closed_ = false; // a line or an arc to become a polyline: open
             }
-            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one).
-            if (s_peditaccept_ == 0 && ctx.input_is_pick() &&
-                (ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc)) {
-                state_ = State::Accept;
-                ctx.echo("Object selected is not a polyline");
-                ctx.set_prompt("Do you want to turn it into one? <Y> ");
+            const bool line_or_arc =
+                ctx.hovered_kind() == core::EntityKind::Line || ctx.hovered_kind() == core::EntityKind::Arc;
+            if (ctx.input_is_pick() && ctx.hovered_kind().has_value() && !line_or_arc &&
+                ctx.hovered_kind() != core::EntityKind::Polyline) {
+                ctx.echo("Object selected is not a polyline, line or arc."); // nothing PEDIT edits
                 return;
+            }
+            // PEDITACCEPT 0: a line or arc picked is offered as a polyline first (1: it is one
+            // at once). Turned into one, it is a polyline from then on, whatever comes next.
+            if (ctx.input_is_pick() && line_or_arc) {
+                if (s_peditaccept_ == 0) {
+                    state_ = State::Accept;
+                    ctx.echo("Object selected is not a polyline");
+                    ctx.set_prompt("Do you want to turn it into one? <Y> ");
+                    return;
+                }
+                op(24);
             }
             state_ = State::Option;
             prompt_option(ctx);
@@ -6866,6 +6894,7 @@ void PeditCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     case State::Accept:
         if (t.empty() || u == "Y" || u == "YES") {
+            op(24); // made a polyline now, as AutoCAD does
             state_ = State::Option;
             prompt_option(ctx);
         } else if (u == "N" || u == "NO") {
@@ -7489,7 +7518,8 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             }
             name_ = std::filesystem::path(file_).stem().string();
             const std::vector<std::string> names = ctx.block_names();
-            if (std::find(names.begin(), names.end(), name_) != names.end()) {
+            if (std::any_of(names.begin(), names.end(),
+                            [&](const std::string& n) { return core::same_table_name(n, name_); })) {
                 state_ = State::Redefine;
                 ctx.set_prompt("Block \"" + name_ + "\" already exists. Redefine it? [Yes/No] <N>: ");
                 return;
@@ -7502,7 +7532,10 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
         {
             bool known = false;
             for (const std::string& n : ctx.block_names()) {
-                known = known || n == name_;
+                if (!known && core::same_table_name(n, name_)) {
+                    name_ = n; // the block's own spelling: names are compared without case
+                    known = true;
+                }
             }
             if (!known) {
                 ctx.echo("Block \"" + name_ + "\" not found.");
@@ -12156,7 +12189,9 @@ void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
             center_ = *p;
             ctx.set_last_point(*p);
             state_ = State::Fit;
-            ctx.set_prompt("Enter an option [Inscribed in circle/Circumscribed about circle] <I>: ");
+            // The default is the last choice, which Enter keeps.
+            ctx.set_prompt(std::string("Enter an option [Inscribed in circle/Circumscribed about circle] <") +
+                           (inscribed_ ? "I" : "C") + ">: ");
         }
         return;
     }
@@ -12465,6 +12500,8 @@ void ArrayCommand::preview(CommandContext& ctx) {
         pv.type = 2;
         pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, polar_rows_,
                                            polar_row_space_};
+        pv.polar.base = base_.value_or(core::Vec2{});
+        pv.polar.has_base = base_.has_value();
         break;
     case Type::Path:
         pv.type = 3;
@@ -12491,10 +12528,14 @@ void ArrayCommand::preview(CommandContext& ctx) {
 
 void ArrayCommand::finish(CommandContext& ctx) {
     switch (type_) {
-    case Type::Polar:
-        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
-                                           polar_rows_, polar_row_space_});
+    case Type::Polar: {
+        core::ArrayPolarCommand c{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
+                                  polar_rows_, polar_row_space_};
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        ctx.submit(c);
         break;
+    }
     case Type::Path: {
         core::ArrayPathCommand c;
         c.pick = path_pick_;
@@ -12574,13 +12615,18 @@ void ArrayCommand::ask_next(CommandContext& ctx) {
     case Q::LevelSpace:
         p = "Specify the distance between levels or [Total/Expression] <" + len(ctx, level_space_) + ">: ";
         break;
+    case Q::LevelTotal:
+        p = "Specify the total distance between first and last levels <" + len(ctx, level_space_ * (levels_ - 1)) +
+            ">: ";
+        break;
     case Q::Items: p = "Enter number of items in array or [Expression] <" + n(items_) + ">: "; break;
+    // Amounts of turn in degrees, as they are typed: not directions, so a full circle
+    // shows 360 and neither ANGBASE nor ANGDIR moves them.
     case Q::AngleBetween:
-        p = "Specify angle between items or [EXpression] <" + core::units::format_angle(core::to_radians(angle_between()), ctx.units()) + ">: ";
+        p = "Specify angle between items or [EXpression] <" + degrees_text(core::to_radians(angle_between())) + ">: ";
         break;
     case Q::Fill:
-        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" +
-            core::units::format_angle(core::to_radians(fill_), ctx.units()) + ">: ";
+        p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" + degrees_text(core::to_radians(fill_)) + ">: ";
         break;
     case Q::RotItems: p = "Rotate arrayed items? [Yes/No] <" + yn(rotate_) + ">: "; break;
     case Q::PolarRows: p = "Enter the number of rows or [Expression] <" + n(polar_rows_) + ">: "; break;
@@ -12630,7 +12676,7 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
     const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::PolarRows ||
                         q == Q::PathItems || q == Q::PathDivideItems;
     const auto lengths = q == Q::ColSpace || q == Q::RowSpace || q == Q::ColTotal || q == Q::RowTotal ||
-                         q == Q::RowElev || q == Q::LevelSpace || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
+                         q == Q::RowElev || q == Q::LevelSpace || q == Q::LevelTotal || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
                          q == Q::PathSpace || q == Q::AngleBetween || q == Q::Fill;
     if (!have && (counts || lengths) && (u == "E" || u == "EX" || u == "EXPRESSION")) {
         expression_for_ = q;
@@ -12645,9 +12691,12 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
                 ask_next(ctx);
                 return;
             }
-            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace) &&
+            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace || q == Q::LevelSpace) &&
                 !(q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace) && (u == "T" || u == "TOTAL")) {
-                queue_.front() = q == Q::ColSpace ? Q::ColTotal : q == Q::RowSpace ? Q::RowTotal : Q::PolarRowTotal;
+                queue_.front() = q == Q::ColSpace   ? Q::ColTotal
+                                 : q == Q::RowSpace ? Q::RowTotal
+                                 : q == Q::LevelSpace ? Q::LevelTotal
+                                                      : Q::PolarRowTotal;
                 ask_next(ctx);
                 return;
             }
@@ -12723,6 +12772,11 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
         break;
     case Q::LevelSpace:
         level_space_ = have ? v : level_space_;
+        break;
+    case Q::LevelTotal:
+        if (have && levels_ > 1) {
+            level_space_ = v / (levels_ - 1);
+        }
         break;
     case Q::Items:
         items_ = have ? iv : items_;
@@ -13072,8 +13126,9 @@ void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     case State::Base:
-        if (read_point(ctx, text)) {
-            state_ = State::Center; // each item keeps its own place about the centre
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p; // the point of the objects that goes round the centre
+            state_ = State::Center;
             ctx.set_prompt("Specify center point of array: ");
         }
         return;
@@ -13111,11 +13166,15 @@ void ArrayClassicCommand::input(CommandContext& ctx, const std::string& text) {
         state_ = State::Rotate;
         ctx.set_prompt("Rotate arrayed objects? [Yes/No] <Y>: ");
         return;
-    case State::Rotate:
-        ctx.submit(core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"),
-                                           ctx.group_id()});
+    case State::Rotate: {
+        core::ArrayPolarCommand c{center_, items_, core::to_radians(fill_), !(u == "N" || u == "NO"), ctx.group_id()};
+        c.base = base_.value_or(core::Vec2{});
+        c.has_base = base_.has_value();
+        c.own_anchors = true; // without a base point, each object's own reference point
+        ctx.submit(c);
         done_ = true;
         return;
+    }
     }
 }
 
@@ -13140,7 +13199,8 @@ void FilletCommand::prompt_first(CommandContext& ctx) {
 namespace {
 /// FILLET / CHAMFER's second-object prompt: what a pick there would make shows under the
 /// cursor.
-void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim, bool chamfer, double d1, double d2) {
+void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim, bool chamfer, double d1, double d2,
+                 double chamfer_angle = -1.0) {
     PreviewSpec pv;
     pv.fillet_hover = true;
     pv.fillet_first = first;
@@ -13149,6 +13209,7 @@ void fillet_band(CommandContext& ctx, core::Vec2 first, double radius, bool trim
     pv.fillet_chamfer = chamfer;
     pv.chamfer_d1 = d1;
     pv.chamfer_d2 = d2;
+    pv.chamfer_angle = chamfer_angle;
     ctx.set_preview(std::move(pv));
 }
 } // namespace
@@ -13179,12 +13240,9 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "UNDO") {
-            if (last_group_ == 0) {
-                ctx.echo("Nothing to undo.");
-                return;
-            }
+            // Each Undo takes back one more of this run's corners; the engine says "Nothing
+            // to undo." once they are all gone.
             ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            last_group_ = 0;
             return;
         }
         if (u == "P" || u == "POLYLINE") {
@@ -13254,7 +13312,9 @@ void FilletCommand::input(CommandContext& ctx, const std::string& text) {
         }
         return;
     case State::TrimMode:
-        if (t.empty() || u == "T" || u == "TRIM") {
+        if (t.empty()) {
+            // Enter keeps the mode shown in the brackets.
+        } else if (u == "T" || u == "TRIM") {
             s_trim_ = true;
         } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
             s_trim_ = false;
@@ -13292,8 +13352,14 @@ double ChamferCommand::dist1() const {
     return s_angle_method_ ? s_length_ : s_dist1_;
 }
 
+// The Angle method's second distance depends on the corner, so the engine works it out
+// from angle() at each one.
 double ChamferCommand::dist2() const {
-    return s_angle_method_ ? s_length_ * std::tan(core::to_radians(s_angle_)) : s_dist2_;
+    return s_angle_method_ ? 0.0 : s_dist2_;
+}
+
+double ChamferCommand::angle() const {
+    return s_angle_method_ ? core::to_radians(s_angle_) : -1.0;
 }
 
 void ChamferCommand::prompt_first(CommandContext& ctx) {
@@ -13330,7 +13396,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::First) {
             prompt_first(ctx);
         } else if (state_ == State::Second) {
-            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2(), angle());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         } else {
             ctx.set_prompt("Select 2D polyline or [Distance/Angle/mEthod]: ");
@@ -13360,12 +13426,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (u == "U" || u == "UNDO") {
-            if (last_group_ == 0) {
-                ctx.echo("Nothing to undo.");
-                return;
-            }
+            // Each Undo takes back one more of this run's corners; the engine says "Nothing
+            // to undo." once they are all gone.
             ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            last_group_ = 0;
             return;
         }
         if (u == "P" || u == "POLYLINE") {
@@ -13398,7 +13461,7 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pick1_ = *p;
             state_ = State::Second;
-            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2());
+            fillet_band(ctx, pick1_, 0.0, s_trim(), true, dist1(), dist2(), angle());
             ctx.set_prompt("Select second line or shift-select to apply corner or [Distance/Angle/Method]: ");
         }
         return;
@@ -13422,8 +13485,10 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
             const bool sharp = ctx.shift_held(); // a clean corner this once
             ctx.set_preview({});
             last_group_ = ctx.group_id();
-            ctx.submit(core::ChamferPickCommand{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
-                                                ctx.pick_radius(), last_group_, s_trim()});
+            core::ChamferPickCommand c{pick1_, *p, sharp ? 0.0 : dist1(), sharp ? 0.0 : dist2(),
+                                       ctx.pick_radius(), last_group_, s_trim()};
+            c.angle = sharp ? -1.0 : angle();
+            ctx.submit(c);
             after_chamfer(ctx);
         }
         return;
@@ -13497,7 +13562,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         back();
         return;
     case State::TrimMode:
-        if (t.empty() || u == "T" || u == "TRIM") {
+        if (t.empty()) {
+            // Enter keeps the mode shown in the brackets.
+        } else if (u == "T" || u == "TRIM") {
             s_trim() = true;
         } else if (u == "N" || u == "NO TRIM" || u == "NOTRIM" || u == "NO") {
             s_trim() = false;
@@ -13522,7 +13589,9 @@ void ChamferCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (const auto p = read_point(ctx, text)) {
             last_group_ = ctx.group_id();
-            ctx.submit(core::ChamferPolylineCommand{*p, dist1(), dist2(), ctx.pick_radius(), last_group_});
+            core::ChamferPolylineCommand c{*p, dist1(), dist2(), ctx.pick_radius(), last_group_};
+            c.angle = angle();
+            ctx.submit(c);
             after_chamfer(ctx);
         }
         return;
@@ -14086,8 +14155,7 @@ void LinearDimensionCommand::place(CommandContext& ctx, core::Vec2 at) {
         }
         c.text_override = text_;
         c.text_angle = text_angle_;
-        ctx.submit(std::move(c));
-        ctx.echo("Dimension placed from object.");
+        ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     } else {
         core::DimData d;
         d.type = type_;
@@ -14126,9 +14194,11 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         }
         break;
     case State::Text:
-        // The text as typed; `<>` stands for the measurement, and an empty answer keeps
-        // the measurement alone.
-        text_ = t;
+        // The text as typed; `<>` stands for the measurement. Enter keeps what the prompt
+        // shows: the text typed before, or the measurement alone when there is none.
+        if (!t.empty()) {
+            text_ = t;
+        }
         show_preview(ctx);
         place_prompt(ctx);
         return;
@@ -14304,8 +14374,7 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
                                       ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
     c.text_override = text_;
     c.text_angle = text_angle_;
-    ctx.submit(std::move(c));
-    ctx.echo("Dimension placed.");
+    ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     done_ = true;
 }
 
@@ -14452,9 +14521,8 @@ void JoggedDimensionCommand::input(CommandContext& ctx, const std::string& text)
                                           ctx.group_id(), override_, *p};
         c.text_override = text_;
         c.text_angle = text_angle_;
-        ctx.submit(std::move(c));
+        ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
         ctx.set_preview({});
-        ctx.echo("Dimension placed.");
         done_ = true;
         return;
     }
@@ -14543,9 +14611,8 @@ void ArcLengthDimensionCommand::input(CommandContext& ctx, const std::string& te
     c.arc_leader = leader_;
     c.partial_from = partial_from_;
     c.partial_to = partial_to_;
-    ctx.submit(std::move(c));
+    ctx.submit(std::move(c)); // the engine says whether the object could be dimensioned
     ctx.set_preview({});
-    ctx.echo("Dimension placed.");
     done_ = true;
 }
 
@@ -14690,6 +14757,7 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
             c.text_override = text_;
             c.text_angle = text_angle_;
             ctx.submit(std::move(c));
+            ctx.echo("Angular dimension placed.");
         } else {
             core::AddObjectDimensionCommand c{static_cast<std::uint8_t>(core::DimType::Angular), pick1_, pick2_,
                                               ctx.pick_radius(), ctx.current_dim_style(), ctx.group_id()};
@@ -14697,10 +14765,9 @@ void AngularDimensionCommand::input(CommandContext& ctx, const std::string& text
             c.quadrant = quadrant_;
             c.text_override = text_;
             c.text_angle = text_angle_;
-            ctx.submit(std::move(c));
+            ctx.submit(std::move(c)); // the engine says whether the objects could be dimensioned
         }
         ctx.set_preview({});
-        ctx.echo("Angular dimension placed.");
         done_ = true;
         return;
     case State::Text:
@@ -15083,16 +15150,14 @@ void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (u == "U" || u == "UNDO") {
-        if (added_ == 0) {
-            ctx.echo("Nothing to undo.");
-        } else {
-            ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
-            core::ChainDimensionCommand back;
-            back.op = core::ChainDimensionCommand::Op::Back;
-            back.baseline = baseline_;
-            ctx.submit(back);
-            --added_;
-        }
+        // The last dimension this run made, and the chain back to where it was before it:
+        // the engine knows which picks made one (a refused pick made none) and says
+        // "Nothing to undo." when there is none left.
+        ctx.submit(core::UndoLastGroupCommand{ctx.command_group()});
+        core::ChainDimensionCommand back;
+        back.op = core::ChainDimensionCommand::Op::Back;
+        back.baseline = baseline_;
+        ctx.submit(back);
         prompt(ctx);
         return;
     }
@@ -15107,7 +15172,6 @@ void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
         c.spacing = spacing_;
         ctx.submit(c);
         ctx.set_last_point(*p);
-        ++added_;
         // The engine reports success or the honest reason it could not.
         prompt(ctx);
     }
@@ -15890,11 +15954,27 @@ void StretchCommand::start(CommandContext& ctx) {
     }
     mode_ = Mode::Select;
     ctx.echo("Select objects to stretch by crossing-window or crossing-polygon...");
-    ctx.set_prompt("Select objects: ");
+    select_.begin(ctx);
+}
+
+void StretchCommand::after_select(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("Nothing selected.");
+        done_ = true;
+        return;
+    }
+    begin_base(ctx);
+}
+
+void StretchCommand::selection_gesture(CommandContext& ctx) {
+    if (mode_ == Mode::Select && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        after_select(ctx);
+    }
 }
 
 void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
     ctx.clear_preview();
+    s_displacement_ = delta;
     ctx.submit(core::StretchSelectionCommand{delta, ctx.group_id()});
     // The engine reports what it actually did -- how many objects, or why none (Ph10.1).
     done_ = true;
@@ -15903,35 +15983,20 @@ void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
 void StretchCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (mode_) {
-    case Mode::Select: {
-        // The viewport does the selecting (drags and picks accumulate, announced as
-        // "N found"); this prompt only has to know when the user is done.
-        if (t.empty()) {
-            if (!ctx.has_selection()) {
-                ctx.echo("Nothing selected.");
-                done_ = true;
-                return;
-            }
-            begin_base(ctx);
-            return;
+    case Mode::Select:
+        // Picks, crossing windows and lassos accumulate in the viewport; typed answers
+        // (C, CP, ALL, a point, ...) go through AutoCAD's Select objects step. The engine
+        // keeps each crossing window and crossing polygon: what it caught is stretched.
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            after_select(ctx);
         }
-        if (upper(t) == "ALL") {
-            ctx.submit(core::SelectAllCommand{});
-            return; // still selecting, as in AutoCAD: Enter finishes
-        }
-        if (const auto p = read_point(ctx, text)) {
-            // A typed coordinate at "Select objects:" is a pick at that point.
-            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
-            return;
-        }
-        ctx.echo("Pick objects, drag a crossing window, type ALL, or press Enter to finish.");
         return;
-    }
     case Mode::Base: {
         const std::string u = upper(t);
         if (t.empty() || u == "D" || u == "DISPLACEMENT") {
             mode_ = Mode::Displacement;
-            ctx.set_prompt("Specify displacement <0.0000, 0.0000>: ");
+            // The last displacement, in the drawing's units, as MOVE and COPY show theirs.
+            ctx.set_prompt("Specify displacement " + displacement_default(ctx, s_displacement_) + ": ");
             return;
         }
         if (const auto p = read_point(ctx, text)) {
@@ -15949,8 +16014,12 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
     }
     case Mode::Displacement: {
         if (t.empty()) {
-            ctx.echo("Zero displacement: nothing to stretch.");
-            done_ = true;
+            if (s_displacement_ == core::Vec2{}) {
+                ctx.echo("Zero displacement: nothing to stretch.");
+                done_ = true;
+                return;
+            }
+            finish(ctx, s_displacement_); // Enter: the displacement shown
             return;
         }
         // The value IS the displacement vector, typed as x,y (or a picked point taken
@@ -16610,7 +16679,8 @@ void MLeaderCommand::first_prompt(CommandContext& ctx) {
 void MLeaderCommand::after_points(CommandContext& ctx) {
     ctx.set_preview(PreviewSpec{PreviewKind::Polyline, pts_});
     if (order_ == Order::Arrow) {
-        if (static_cast<int>(pts_.size()) < s_max_points_ - 1) {
+        // A style's 0 is "No limit": next points until Enter, as QLEADER does.
+        if (s_max_points_ == 0 || static_cast<int>(pts_.size()) < s_max_points_ - 1) {
             state_ = State::Next;
             ctx.set_prompt("Specify next point: ");
         } else {
@@ -16751,13 +16821,15 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
             first_prompt(ctx);
         } else if (u == "M" || u == "MAXPOINTS") {
             state_ = State::MaxPoints;
-            ctx.set_prompt("Enter the maximum points for leader line <" + std::to_string(s_max_points_) + ">: ");
+            ctx.set_prompt("Enter the maximum points for leader line (0 for no limit) <" +
+                           (s_max_points_ == 0 ? std::string("No limit") : std::to_string(s_max_points_)) + ">: ");
         } else if (u == "C" || u == "CONTENT TYPE") {
             state_ = State::ContentType;
             ctx.set_prompt(std::string("Select a content type [Mtext/None] <") + (s_content_ ? "Mtext" : "None") + ">: ");
         } else if (u == "L" || u == "LEADER TYPE") {
             state_ = State::LeaderType;
-            ctx.set_prompt("Select a leader type [Straight/sPline/None] <Straight>: ");
+            ctx.set_prompt(std::string("Select a leader type [Straight/sPline/None] <") +
+                           (s_leader_type_ == 1 ? "sPline" : s_leader_type_ == 2 ? "None" : "Straight") + ">: ");
         } else if (u == "A" || u == "LANDING" || u == "LEADER LANDING") {
             state_ = State::UseLanding;
             ctx.set_prompt(std::string("Use landing [Yes/No] <") + (s_landing_ ? "Yes" : "No") + ">: ");
@@ -16770,8 +16842,8 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
     case State::MaxPoints: {
         if (!t.empty()) {
             const std::optional<double> n = parse_number(t);
-            if (!n || *n < 2.0 || *n > 99.0 || *n != std::floor(*n)) {
-                ctx.echo("Requires a whole number from 2 to 99.");
+            if (!n || (*n != 0.0 && *n < 2.0) || *n > 99.0 || *n != std::floor(*n)) {
+                ctx.echo("Requires a whole number from 2 to 99, or 0 for no limit.");
                 return;
             }
             s_max_points_ = static_cast<int>(*n);
@@ -16892,6 +16964,14 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
             content.clear();
             for (std::size_t i = 0; i < lines_.size(); ++i) {
                 content += (i > 0 ? "\n" : "") + lines_[i];
+            }
+        }
+        // \P typed here is AutoCAD's paragraph break, as it is in a DXF's MTEXT. (Text with
+        // other format codes keeps it: the formatted layout reads it there.)
+        if (!core::text::has_mtext_codes(content)) {
+            for (std::size_t at = content.find("\\P"); at != std::string::npos; at = content.find("\\P", at)) {
+                content.replace(at, 2, "\n");
+                ++at;
             }
         }
         core::MTextBlock b;
@@ -17023,6 +17103,10 @@ void MTextCommand::input(CommandContext& ctx, const std::string& text) {
         if (!t.empty() && u != "A" && u != "AT LEAST" && u != "E" && u != "EXACTLY") {
             ctx.echo("Enter At least or Exactly.");
             return;
+        }
+        if (u == "E" || u == "EXACTLY") {
+            // Said, not taken silently: lines are spaced At least as far apart as asked.
+            ctx.echo("Exactly is not available yet: the lines are spaced At least.");
         }
         state_ = State::Spacing;
         ctx.set_prompt("Enter line spacing factor or distance <" + fmt4(spacing_) + "x>: ");
@@ -17218,8 +17302,8 @@ void TextEditCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string u = upper(t);
     switch (state_) {
     case State::Content:
+        // The engine says "Text edited." or why not (no editable text there).
         ctx.submit(core::EditTextContentCommand{at_, radius_, text, ctx.group_id()});
-        ctx.echo("Text edited.");
         ++edits_;
         if (s_single_) {
             done_ = true;
@@ -21238,6 +21322,12 @@ void ChangeUiCommand::cancel(CommandContext& ctx) {
 
 void HatchEditUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
+    // Noun-verb: one hatch already selected (the Hatch Editor tab's) is the one edited.
+    if (ctx.selection_count() == 1 &&
+        ctx.selection_kinds() == (1u << static_cast<unsigned>(core::EntityKind::Hatch))) {
+        options(ctx);
+        return;
+    }
     ctx.set_prompt("Select hatch object: ");
 }
 
