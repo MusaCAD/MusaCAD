@@ -289,7 +289,8 @@ both call; TXTEXP asks it for an outline face's closed rings, `IFontEngine::glyp
 instead of triangles) — so measurement, bounds, and glyphs never diverge.
 Over/underline are drawn as a horizontal stroke spanning each toggled run (single-line
 today; the symbol codes work in both TEXT and MTEXT). The stroke font carries °, ±, ⌀ as
-glyphs; a TTF face supplies them when selected.
+glyphs (Ø typed in and AutoCAD's `\U+2205` draw the same ⌀, and the zero is an unslashed oval
+narrower than the O, so it never reads as ⌀); a TTF face supplies them when selected.
 
 ### Leader / MLeader labels are text-family (no new family)
 

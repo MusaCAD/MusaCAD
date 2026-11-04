@@ -54,6 +54,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or multileader as its lines and text (#93).
 - Opening a drawing no longer loads the blocks AutoCAD keeps for each dimension's drawn
   form (1,336 blocks down to 337 in one drawing) (#93).
+- The built-in font's zero has no slash. Beside a diameter sign it read as one: `1.00`
+  next to `Ø67.85` looked like `1.ØØ`. It is now an oval narrower than the O, as in
+  AutoCAD's txt and simplex and in ISO lettering (#94).
+- A `Ø` typed into text, and AutoCAD's `\U+2205`, draw the diameter sign in the built-in
+  font; they were left blank, so `Ø250 THRU` read `250 THRU` (#94).
 - **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
 - Closing the window read the Dynamic Input settings from freed memory (#87).
 - Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
