@@ -17,6 +17,16 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
 - **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
   offers, negative for Through).
+- **`musacad --dump-wiki-data <out.json>`** -- the facts the Musa CAD Wiki generates its
+  reference pages from, read off the program itself: every command with its aliases,
+  description, icon and what it says when it starts (the prompt, with the real defaults of a
+  fresh install, or the window it opens); which commands are system variables; the ribbon,
+  tab by tab, with the command each tool starts and the tools not built yet; the Quick
+  Access Toolbar; every keyboard shortcut; the native format's version; the command line's
+  help. Headless, with settings of its own, so nothing a user customised gets into it
+  (`docs/CLI.md`).
+- `CommandRegistry::aliases_of(name)`, and SETVAR's list of variables as
+  `system_variable_names()` (`command/sysvars.hpp`), shared by SETVAR and the export.
 
 ### Changed
 - ARRAYPATH's default base point is the end of the path curve, as its prompt says: the
@@ -33,6 +43,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   Editor is the tab shown while BEDIT is open (#86). The Hatch Editor tab's **Pick Points**
   adds areas to the selected hatch (HATCHEDIT Add boundaries) (#92).
 - The [plot-spec] line of each plot goes to stderr, not the command line (#91).
+- The keyboard shortcuts for the clipboard, the drawing tabs and closing a drawing are named,
+  so CUI says what a key is used for when you try to take it ("Ctrl+W is used by Close the
+  drawing").
 
 ### Fixed
 - **Opening a DWG or DXF no longer draws lines to the origin** (#93). Radius and diameter

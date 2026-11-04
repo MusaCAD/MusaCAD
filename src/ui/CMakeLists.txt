@@ -19,6 +19,7 @@ add_library(musacad_ui STATIC
     ribbon_layout.cpp
     command_icons.cpp
     theme.cpp
+    wiki_data.cpp
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/properties_panel.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/dyn_input.hpp"
     "${CMAKE_SOURCE_DIR}/include/musacad/ui/main_window.hpp"

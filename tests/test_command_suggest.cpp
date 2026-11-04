@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/command/command_registry.hpp"
+#include "musacad/command/sysvars.hpp"
 
 using namespace musacad::command;
 
@@ -59,4 +60,25 @@ TEST_CASE("New registry rows appear in suggestions automatically (single source)
     reg.register_command({"WOBBLE"}, [] { return std::unique_ptr<ICommand>(nullptr); }, "",
                          "Test command.");
     REQUIRE(has_alias(reg.suggest("WOB"), "WOBBLE"));
+}
+
+TEST_CASE("aliases_of lists a command's aliases, the short form first") {
+    const CommandRegistry reg = CommandRegistry::make_default();
+    const std::vector<std::string> line = reg.aliases_of("LINE");
+    REQUIRE(line.size() >= 2);
+    REQUIRE(line.front() == "L");
+    REQUIRE(std::find(line.begin(), line.end(), "LINE") != line.end());
+    REQUIRE(reg.aliases_of("NOT-A-COMMAND").empty());
+    // Every command the registry lists has at least its own name among its aliases.
+    for (const CommandSuggestion& c : reg.commands()) {
+        REQUIRE_FALSE(reg.aliases_of(c.name).empty());
+    }
+}
+
+TEST_CASE("Every system variable SETVAR knows is a registered command") {
+    const CommandRegistry reg = CommandRegistry::make_default();
+    for (const char* name : system_variable_names()) {
+        INFO(name);
+        REQUIRE(reg.contains(name));
+    }
 }
