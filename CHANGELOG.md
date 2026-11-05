@@ -98,6 +98,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   keeps its feet-and-inches bits; \P typed at MTEXT is a paragraph break (#92).
 
 ### Documentation
+- docs/CLI.md is a short version of the wiki's command-line page, which now has the JSON
+  report of `--check` as well; how the command line is built is in ARCHITECTURE.md (#88).
 - docs/BUILD.md is a short version of the wiki's Building page (#88); COMMANDS.md,
   AUTOCAD_CONFIG.md and ROADMAP.md say what the program does now (#89).
 

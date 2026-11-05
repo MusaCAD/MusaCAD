@@ -3,277 +3,33 @@
 
 # Musa CAD — command line
 
-The shipped `musacad` binary has a documented command line, so a drawing can be
-opened, validated or plotted from a script without a GUI session and a human.
+The `musacad` program opens, checks and plots drawings from a terminal or a script, with
+no window: every option, the exit codes, the JSON report of `--check` and ready-to-use
+recipes (a folder of drawings to PDF, a CI step, a Windows batch file) are on the wiki:
+
+* **The command line:** https://wiki.musacad.org/scripting/command-line/
+
+Its option tables are read from `musacad --help` when the wiki is built, so they follow
+each release. Offline, the short version:
 
 ```
 musacad [<drawing>]              open a drawing in the GUI
 musacad --check <drawing> [--window x0,y0,x1,y1] [--lines] [--json]
                                  read a drawing, check its text, report, exit
-musacad --plot <drawing> <out.pdf> [plot options]
+musacad --plot <drawing> <out.pdf> [--paper A3] [--portrait] [--scale 1:5] ...
+                                 plot to PDF, no display needed
 musacad --dump-wiki-data <out.json>
-musacad --help
-musacad --version
+                                 the commands, ribbon and shortcuts as JSON, for the wiki
+musacad --help                   every option
 ```
 
-`<drawing>` is a `.musa` file, or a `.dxf` file (loaded through the DXF importer —
-the extension chooses the loader).
+`<drawing>` is a `.musa` or a `.dxf` file. The exit codes are `0` success, `1` a usage
+error, `2` the drawing could not be read, `3` the output could not be written and `4`
+`--check` found text problems. Options with one dash (`-platform offscreen`) go to Qt.
 
-## Exit codes
+On Windows, run `musacad.exe` from scripts, not `musacad_app.exe`, so the script waits for
+it and sees its exit code.
 
-Scripts depend on these, so they are part of the interface:
-
-| Code | Meaning |
-|---|---|
-| `0` | success |
-| `1` | usage error (bad command line) |
-| `2` | the drawing could not be read or parsed |
-| `3` | the output could not be written |
-| `4` | `--check`: the drawing opened, and its text has problems (see below) |
-
-## Opening a drawing
-
-```sh
-musacad part.musa
-```
-
-The file argument rides the **existing** `OpenDocumentCommand` — the same
-geometry-thread path `File ▸ Open` uses, into a new tab. There is no second load
-path, so a drawing that opens from the CLI behaves identically to one opened from
-the dialog (including the fail-safe rule: on a parse error the store is left
-untouched and the error is reported).
-
-## Validating a drawing
-
-```sh
-musacad --check part.musa && echo "ok"
-```
-
-`--check` runs the same core loader (`io::load_native` / `io::load_dxf`) the engine
-runs, prints what it read to stdout on success, and prints the parser's message to
-**stderr** with exit code `2` on failure. It constructs **no Qt application object**,
-so it works with no `DISPLAY`/`WAYLAND_DISPLAY` and no GPU:
-
-```sh
-$ musacad --check broken.musa
-musacad: broken.musa: LINE record malformed (line 2).
-$ echo $?
-2
-```
-
-### Checking the text
-
-A drawing that opens is then checked the way a person checks a sheet before it goes
-out. `--check` reports every text whose letters
-
-- **overlap** the letters of another text;
-- reach **outside the frame** -- the window given with `--window x0,y0,x1,y1` (as for
-  `--plot`), or else the drawing's largest rectangle (a closed polyline with four
-  square corners, such as a border drawn with RECTANG); a drawing with neither has no
-  frame to leave;
-- use a character the font has **no glyph** for, which the plot would leave blank
-  (each such character once, with its code point);
-- with `--lines`, are **crossed by a line**: a line, polyline, arc, circle, ellipse,
-  spline, or a line of a block reference (a title block's cell lines). A dimension's own
-  lines and a leader's line do not count, so a value standing on its dimension line is
-  fine.
-
-Text means TEXT, attribute definitions, each line of an MTEXT and of a multileader's
-text, dimension values and leader labels, on layers that are on and thawed. The box of
-a text is the box of its letters as the plot draws them -- the strokes, at the text's
-height, width factor, obliquing and rotation, with its justification -- so a short word
-in a wide cell is not reported for the cell's empty part, and a turned text is checked
-along its own direction. The lines of one MTEXT never count as overlapping each other.
-
-`--check` has no Qt and no fonts of its own: text in a TrueType font is measured as the
-stroke font draws it, and only the stroke font's missing characters are reported.
-
-```sh
-$ musacad --check board.musa
-board.musa: Opened 214 entities.
-board.musa: overlap: TEXT "R1 750 Ω" (layer NOTES, at 10.2,10) and TEXT "C3" (layer NOTES, at 14.2,10.5)
-board.musa: outside the frame: TEXT "REV B" (layer TITLE, at 410.4,6)
-board.musa: 38 texts checked, 2 problems
-$ echo $?
-4
-```
-
-With `--json` the report goes to stdout as one JSON object, for a pipeline to read:
-
-```json
-{
-  "file": "board.musa",
-  "texts": 38,
-  "problems_found": 2,
-  "frames": [
-    {"space": 0, "from": "rectangle", "min": [0, 0], "max": [420, 297]}
-  ],
-  "problems": [
-    {"kind": "overlap",
-     "text": {"index": 3, "type": "TEXT", "layer": "NOTES", "text": "R1 750 Ω", "font": "",
-              "space": 0, "entity": 3,
-              "box": [[10.2, 10], [21.1, 10], [21.1, 12.5], [10.2, 12.5]],
-              "bounds": [10.2, 10, 21.1, 12.5]},
-     "with": {"index": 4, "type": "TEXT", "text": "C3", ...}},
-    {"kind": "outside-frame", "text": {...}, "frame": {"min": [0, 0], "max": [420, 297]}}
-  ]
-}
-```
-
-| `kind` | Also has |
-|---|---|
-| `overlap` | `with`: the other text |
-| `outside-frame` | `frame`: the rectangle it leaves |
-| `crosses-line` | `line`: `type`, `layer`, and the crossing segment's `from` / `to` |
-| `missing-glyph` | `missing`: a list of `{"character", "code"}` |
-
-`box` is the letters' box in drawing units, corner by corner from the left end of the
-baseline (baseline-left, baseline-right, top-right, top-left), so it is exact for a
-rotated text; `bounds` is `[xmin, ymin, xmax, ymax]`. `space` is 0 for model space, else
-a layout's number; texts are compared with texts and lines of their own space. `entity`
-numbers the text-bearing entities, so two runs with the same number are lines of one
-MTEXT. The exit code is `4` whenever `problems` is not empty, `0` when it is.
-
-## Plotting headlessly
-
-```sh
-musacad --plot drawing.musa out.pdf \
-        --paper A4 --portrait \
-        --scale 1:5 --window 0,0,420,297
-```
-
-| Option | Meaning |
-|---|---|
-| `--paper <name>` | `A4` `A3` `A2` `A1` `A0` `Letter` `Tabloid` (or the full `ISO A4` / `ANSI A (Letter)` names). Default `A4`. |
-| `--landscape` / `--portrait` | Sheet orientation. Default landscape. |
-| `--extents` | Plot the drawing's extents. **Default.** |
-| `--window x0,y0,x1,y1` | Plot an explicit world rectangle. Corners may be given in any order. |
-| `--fit` | Scale the area to fill the sheet. **Default.** |
-| `--scale <n:m>` | Plot `n` mm of paper per `m` drawing units (e.g. `1:5`). Implies `--fit` off. |
-| `--monochrome` | Plot everything black (the built-in monochrome CTB style). |
-
-**No display is required, and none is used.** Plotting is the QPainter/`QPdfWriter`
-route, so `--plot` constructs a `QGuiApplication` (never `QApplication`), creates no
-GL context and never touches the renderer. It forces the **offscreen** Qt platform
-plugin unless you pass `-platform` explicitly — deliberately overriding any inherited
-`QT_QPA_PLATFORM`, because a desktop session exports something like `wayland;xcb` and a
-plot launched from cron, CI or ssh with that in its environment would otherwise abort
-with *"no Qt platform plugin could be initialized"*. That is precisely the unattended
-use this option exists for.
-
-### It is the same plot path the GUI uses
-
-`--plot` is not a second renderer. It shares, with `PLOT`/`Ctrl+P` and with
-`tools/plot_check`:
-
-* the **loaders** (`io::load_native` / `io::load_dxf`),
-* the **snapshot builder** (`core::build_render_snapshot`) — so linetype dashing,
-  `LTSCALE × CELTSCALE`, hatch fills, lineweights and text layout are identical,
-* the **paper table** (`ui::standard_papers`),
-* the **tessellation rule** (`ui::plot_tolerance` — ~0.3 px chord deviation at 300 DPI
-  over the *plotted* region, so a circle filling a picked window stays smooth),
-* the **PDF device setup and painter** (`ui::write_plot_pdf` → `ui::paint_plot`).
-
-Before this, the tolerance rule and the `QPdfWriter` setup were copy-pasted between
-`MainWindow` and `plot_check`, and the paper table lived privately inside the plot
-dialog. They are now single definitions with both a GUI and a headless caller.
-
-The CLI injects the same `QtFontEngine` the GUI does, so TrueType/OpenType text plots
-as real filled outlines headlessly rather than silently falling back to the stroke font.
-
-### Batch plotting
-
-```sh
-for f in sheets/*.musa; do
-    musacad --plot "$f" "out/$(basename "${f%.musa}").pdf" --paper A3 --landscape || exit
-done
-```
-
-`scripts/plot_fixtures.sh` does exactly this over `tests/fixtures/`, writing to
-`artifacts/`; a fixture that needs non-default flags carries a sidecar
-`<name>.plotargs` file.
-
-## The documentation's data
-
-```sh
-musacad --dump-wiki-data wiki-data.json     # or "-" for stdout
-```
-
-`--dump-wiki-data` writes, as one JSON document, the facts the
-[Musa CAD Wiki](https://wiki.musacad.org) generates its reference pages from -- so the
-documentation is read off the program it documents and cannot disagree with it:
-
-| Key | What it holds |
-|---|---|
-| `version`, `formatVersion` | `core::version_string()` and the native format's `kFormatVersion` |
-| `commands` | every command once (`CommandRegistry::commands()`): `name`, `aliases` (`aliases_of`, the short form first), `primaryAlias`, `description`, `icon`, `setvar` (SETVAR knows it), `dimvar` (a `kDimVars` entry), and `opening` -- what the command prints when it starts (`echo`), the `prompt` it then waits at, or `finished` when it is done at once, and the `window` or dialog it asks for |
-| `setvarNames`, `dimVars`, `dimOverrideVars` | `system_variable_names()`, `core::kDimVars`, `core::kDimOverrideVars` |
-| `cli` | `help_text()` and `version_text()` |
-| `ui.ribbon` | every tab (the contextual ones marked) -> panel -> tool, with the command each tool and each of its menu entries starts, the macro input it types, the slide-out tools, and the placeholders for tools Musa CAD does not have yet |
-| `ui.quickAccessToolbar` | what the toolbar can show, and what it shows on a fresh install |
-| `ui.shortcuts` | every action with a keyboard shortcut (the keys as `QKeySequence::PortableText`) |
-| `ui.viewportKeys` | the keys the drawing area reads itself (Ctrl+A, the Shift overrides ...), listed in `src/app/wiki_data.cpp` beside the code that reads them |
-
-How it reads them, so the data is a fresh install's and nothing else:
-
-* The main window is **built and never shown**, on the offscreen platform (no display is
-  needed, as for `--plot`), with **settings of its own** in a scratch directory -- a user's
-  shortcuts, aliases or toolbar never reach the output, and nothing is written to theirs.
-* Each command is **started and cancelled** in a command processor of its own, on an empty
-  drawing. The drawing area it sees is a probe: the settings it reads (the running object
-  snaps, PICKBOX ...) come from the never-shown window, so a default such as
-  `Enter new value for OSMODE <4133>:` is the real one; a window or dialog it asks for is
-  recorded (`opening.window`) and not opened, and the command is told it is not there.
-* Ribbon controls name the command they start through the `musacadCommand` /
-  `musacadMacro` properties (`ribbon_layout.cpp`), placeholders through
-  `musacadPlaceholder`; `RibbonBar::structure()` and `RibbonPanel::tool_buttons()` walk them.
-
-Exit codes: `0`, or `3` when the file cannot be written. `tests/cli_check.cmake` runs it with
-no display and checks the output for its keys.
-
-## Qt options
-
-Musa CAD's own options are **double-dash** (`--check`, `--help`, `--version`); Qt's
-are **single-dash** and are forwarded verbatim, including their values:
-
-```sh
-musacad -platform offscreen part.musa
-```
-
-An unknown double-dash option is a usage error. Qt's double-dash spellings are not
-supported — use the single-dash form.
-
-## Windows
-
-The Windows build (and the installer) ships two programs side by side:
-
-| Program | What it is |
-|---|---|
-| `musacad_app.exe` | The windowed application — what the Start menu shortcut and the file associations open. No console window. |
-| `musacad.exe` | The console front-end for everything on this page. It runs `musacad_app.exe` with the same arguments, hands it the console, waits, and exits with its exit code. |
-
-Use `musacad.exe` from `cmd`, PowerShell and scripts:
-
-```bat
-"C:\Program Files\Musa CAD\musacad.exe" --check part.musa && echo ok
-```
-
-Two programs because Windows shells do not wait for a windowed program: run directly,
-`musacad_app.exe --check part.musa` returns to the prompt at once. It still prints
-(the application attaches to the console it was started from), but `%ERRORLEVEL%` /
-`$LASTEXITCODE` never sees the result and a `&&` chain runs regardless. The front-end
-restores the documented behaviour; redirection (`> out.txt`) and pipes pass through it
-unchanged.
-
-`--plot` on Windows asks Qt for `offscreen;windows`: the offscreen platform the
-installer ships, with the desktop platform as the fallback, so a deployment that lost
-`platforms\qoffscreen.dll` still plots instead of stopping on Qt's error box.
-
-## How it is wired
-
-`main()` parses the command line **before** constructing `QApplication`
-(`src/app/main.cpp` → `musacad::app::parse_cli`), which is what lets `--help`,
-`--version` and `--check` run headless. The parser lives in its own **Qt-free**
-static library (`musacad_cli`, `src/app/cli.cpp`) so it is unit-tested in the normal
-test binary; `tests/cli_check.cmake` additionally runs the **shipped executable** with
-`DISPLAY`/`WAYLAND_DISPLAY` cleared and asserts each exit code end to end.
+How the command line is built -- parsed before any Qt object exists, the plot path it
+shares with PLOT, and how `--dump-wiki-data` reads the program -- is in
+[ARCHITECTURE.md](ARCHITECTURE.md#the-cli-issue-11).

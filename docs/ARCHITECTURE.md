@@ -2399,7 +2399,8 @@ and a circle that fills the picked window then collapses into a visible polygon.
 `main()` parses the command line **before constructing any Qt object**
 (`musacad::app::parse_cli`, in the Qt-free `musacad_cli` library), which is what lets
 `--help`, `--version` and `--check` run with no display, no windowing system and no GL
-context. See [CLI.md](CLI.md) for the full grammar.
+context. The grammar is what `musacad --help` prints (`app::help_text`), which the wiki's
+command-line page reads when it is built.
 
 * **`musacad <file>`** submits the existing `OpenDocumentCommand` — the same
   geometry-thread path `File ▸ Open` uses. **No second load path**, so the fail-safe
@@ -2429,6 +2430,31 @@ entry points the ones the harness uses.
 argument handling and drifted from the GUI's plot semantics, and a second shipped
 executable is a packaging change on three platforms. One binary that branches on its
 mode keeps a single plot path, which is the invariant that matters.
+
+**Windows: two programs.** The installer ships `musacad_app.exe`, the windowed
+application the Start menu and the file associations open, and `musacad.exe`, a console
+front-end (`src/app/win_launcher.cpp`) that runs `musacad_app.exe` with the same arguments,
+hands it the console, waits and exits with its exit code. Windows shells do not wait for a
+windowed program: run directly, `musacad_app.exe --check part.musa` returns to the prompt at
+once, and `%ERRORLEVEL%` never sees the result. `--plot` there asks Qt for
+`offscreen;windows`, so a deployment that lost `platforms\qoffscreen.dll` still plots.
+
+**`--dump-wiki-data` (#84)** writes, as one JSON document, the facts the wiki generates its
+reference pages from: the commands (`CommandRegistry::commands()`, with `aliases_of`, the
+description, the icon, whether SETVAR knows it, and `opening` -- what it prints when it
+starts, the prompt it waits at, or the window it asks for), `system_variable_names()`, the
+dimension variables, `help_text()`, the ribbon tab by tab, the Quick Access Toolbar, the
+keyboard shortcuts and the keys the drawing area reads itself. So that the data is a fresh
+install's and nothing else, the main window is built and never shown, on the offscreen
+platform, with settings of its own in a scratch directory; each command is started and
+cancelled in a command processor of its own on an empty drawing, against a probe drawing
+area that records a window it asks for instead of opening it. Ribbon controls name the
+command they start through the `musacadCommand` / `musacadMacro` properties
+(`ribbon_layout.cpp`). `tests/cli_check.cmake` runs it with no display and checks the
+output's keys.
+
+`scripts/plot_fixtures.sh` plots every drawing in `tests/fixtures/` to `artifacts/` through
+`--plot`; a fixture that needs other options carries a `<name>.plotargs` file beside it.
 
 **Verification.** `tests/test_cli.cpp` asserts the parser's outputs directly (it links
 the Qt-free `musacad_cli`); `tests/cli_check.cmake` runs the **shipped executable** with
