@@ -20530,6 +20530,72 @@ void AlignSpaceUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void LayoutMergeCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter layout name(s) to merge, separated by commas, or [*] <*>: ");
+}
+
+void LayoutMergeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::vector<std::string> names = ctx.layout_names();
+    if (!asked_from_) {
+        from_.clear();
+        if (t.empty() || t == "*") {
+            from_ = names; // all of them: one is the destination, the rest merge into it
+        } else {
+            std::size_t start = 0;
+            while (start <= t.size()) {
+                const std::size_t comma = t.find(',', start);
+                std::string n = trimmed(t.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+                if (!n.empty()) {
+                    const auto it = std::find_if(names.begin(), names.end(),
+                                                 [&](const std::string& x) { return core::same_table_name(x, n); });
+                    if (it == names.end()) {
+                        ctx.echo("No layout named \"" + n + "\".");
+                        return;
+                    }
+                    from_.push_back(*it);
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+        }
+        if (from_.empty()) {
+            ctx.echo("No layouts to merge.");
+            done_ = true;
+            return;
+        }
+        asked_from_ = true;
+        ctx.set_prompt("Enter destination layout name or [Current] <Current>: ");
+        return;
+    }
+    std::string to;
+    const std::string u = upper(t);
+    if (!t.empty() && u != "C" && u != "CURRENT") {
+        const auto it = std::find_if(names.begin(), names.end(), [&](const std::string& x) { return core::same_table_name(x, t); });
+        if (it == names.end()) {
+            ctx.echo("No layout named \"" + t + "\".");
+            return;
+        }
+        to = *it;
+    }
+    const std::uint64_t group = ctx.group_id();
+    for (const std::string& n : from_) {
+        if (!to.empty() && core::same_table_name(n, to)) {
+            continue; // the destination itself
+        }
+        ctx.submit(core::LayoutCommand{core::LayoutCommand::Op::Merge, n, to, group});
+    }
+    ctx.echo("UNDO does not bring a merged layout back.");
+    done_ = true;
+}
+
+void LayoutMergeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void MLeaderCollectCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (ctx.has_selection()) {

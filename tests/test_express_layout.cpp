@@ -134,3 +134,43 @@ TEST_CASE("#77 ALIGNSPACE asks for the points as AutoCAD does, on a layout only"
     REQUIRE(h.out.lines.back().find("layout") != std::string::npos); // the harness is in model space
     REQUIRE_FALSE(h.proc.has_active_command());
 }
+
+TEST_CASE("#77 LAYOUTMERGE: a layout's objects onto another's sheet, the layout deleted") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(LayoutCommand{LayoutCommand::Op::New, "Second", {}, 0});
+    engine.submit(SetActiveSpaceCommand{0, "Second"});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.active_space != 0; }));
+    const std::uint8_t second = engine.snapshot().active_space;
+    AddLineCommand l{{0, 0}, {50, 0}, 1};
+    l.props = on_sheet(second);
+    engine.submit(l);
+    io::Document doc = dump(engine, "musacad_layoutmerge1.musa");
+    std::string first_name;
+    std::uint8_t first_id = 0;
+    for (const Layout& lay : doc.layouts) {
+        if (lay.name != "Second") {
+            first_name = lay.name;
+            first_id = lay.id;
+            break;
+        }
+    }
+    REQUIRE_FALSE(first_name.empty());
+    engine.submit(LayoutCommand{LayoutCommand::Op::Merge, "Second", first_name, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("merged into") != std::string::npos; }));
+    doc = dump(engine, "musacad_layoutmerge2.musa");
+    REQUIRE(std::none_of(doc.layouts.begin(), doc.layouts.end(), [](const Layout& x) { return x.name == "Second"; }));
+    REQUIRE(doc.lines.size() == 1);
+    REQUIRE(doc.lines[0].props.space() == first_id); // where it was, on the other sheet
+    REQUIRE(doc.lines[0].b == Vec2{50, 0});
+    engine.stop();
+}
+
+TEST_CASE("#77 LAYOUTMERGE asks for the layouts and the destination") {
+    H h;
+    h.run({"LAYOUTMERGE"});
+    REQUIRE(h.out.prompt == "Enter layout name(s) to merge, separated by commas, or [*] <*>: ");
+    h.run({""}); // the harness has no layouts: nothing to merge
+    REQUIRE(h.out.lines.back() == "No layouts to merge.");
+    REQUIRE_FALSE(h.proc.has_active_command());
+}

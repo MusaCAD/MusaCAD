@@ -9842,6 +9842,44 @@ void GeometryEngine::apply_layout(const LayoutCommand& c) {
         report("Layout \"" + c.name + "\" deleted.");
         return;
     }
+    case Op::Merge: {
+        // LAYOUTMERGE: the layout's objects onto the destination's sheet, where they were,
+        // and the layout gone. The layout table is not part of undo, so neither is this.
+        const Layout* from = find_layout(c.name);
+        const Layout* to = c.new_name.empty() ? store_.layout_by_id(store_.active_space()) : find_layout(c.new_name);
+        if (from == nullptr || to == nullptr) {
+            report("LAYOUTMERGE: no layout named \"" + (from == nullptr ? c.name : c.new_name) + "\".");
+            return;
+        }
+        if (from->id == to->id) {
+            report("LAYOUTMERGE: \"" + c.name + "\" is the layout merged into.");
+            return;
+        }
+        const std::uint8_t from_id = from->id;
+        const std::uint8_t to_id = to->id;
+        const std::string to_name = to->name;
+        std::size_t moved = 0;
+        for (const EntityHandle h : all_live()) {
+            const EntityProps* p = store_.props(h);
+            if (p != nullptr && p->space() == from_id) {
+                EntityProps q = *p;
+                q.set_space(to_id);
+                store_.set_props(h, q);
+                ++moved;
+            }
+        }
+        const bool was_active = store_.active_space() == from_id;
+        store_.remove_layout(from_id);
+        if (was_active) {
+            store_.set_active_space(to_id);
+            selection_.clear();
+        }
+        redo_.clear();
+        dirty_ = true;
+        geom_dirty_ = true;
+        report("Layout \"" + c.name + "\" merged into \"" + to_name + "\" (" + std::to_string(moved) + " object(s)).");
+        return;
+    }
     case Op::Rename: {
         const Layout* l = find_layout(c.name);
         if (l == nullptr) {

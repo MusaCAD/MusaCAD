@@ -857,6 +857,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
     reg({"ALIGNSPACE"}, [] { return std::make_unique<AlignSpaceUiCommand>(); }, "",
         "Pan and scale a layout viewport so points of the model fall on points of the sheet.");
+    reg({"LAYOUTMERGE", "-LAYOUTMERGE"}, [] { return std::make_unique<LayoutMergeCommand>(); }, "",
+        "Merge layouts into one: their objects onto its sheet, and the layouts deleted.");
     reg({"MLEADERCOLLECT", "MLC"}, [] { return std::make_unique<MLeaderCollectCommand>(); }, "",
         "Collects multileaders with blocks into one, the blocks in a row, a column or rows.");
     reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",

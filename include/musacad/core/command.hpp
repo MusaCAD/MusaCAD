@@ -1880,8 +1880,10 @@ struct SetActiveSpaceCommand {
 };
 /// LAYOUT: New (a fresh sheet named `name`), Copy (a copy of the layout `name` as
 /// `new_name`, objects included), Delete (an empty layout), Rename (`name` -> `new_name`).
+/// Merge (LAYOUTMERGE, #77): layout `name`'s objects go to layout `new_name` (empty: the
+/// layout shown), where they were on the sheet, and the layout is deleted.
 struct LayoutCommand {
-    enum class Op : std::uint8_t { New, Copy, Delete, Rename };
+    enum class Op : std::uint8_t { New, Copy, Delete, Rename, Merge };
     Op op = Op::New;
     std::string name;
     std::string new_name;

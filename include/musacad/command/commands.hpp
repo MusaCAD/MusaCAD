@@ -3833,6 +3833,23 @@ private:
     bool done_ = false;
 };
 
+/// LAYOUTMERGE (Express Tools, #77): `Enter layout name(s) to merge, separated by commas,
+/// or [*] <*>:` and `Enter destination layout name or [Current] <Current>:` -- each layout's
+/// objects onto the destination's sheet where they were, and the layout deleted.
+class LayoutMergeCommand final : public ICommand {
+public:
+    std::string name() const override { return "LAYOUTMERGE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    std::vector<std::string> from_;
+    bool asked_from_ = false;
+    bool done_ = false;
+};
+
 /// MLEADERCOLLECT (#61): `Select multileaders:`, then `Specify collected multileader location
 /// or [Vertical/Horizontal/Wrap] <Horizontal>:` -- the multileaders with the same block made
 /// one, their blocks in a row, a column or rows (Wrap: `Specify wrap width or [Number]:`, then
