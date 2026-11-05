@@ -28,6 +28,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   type Block, its source block what MLEADER uses (the Multileader Style Manager). Balloons are
   kept in the drawing (format v47); in DXF each goes out as its leader and a block reference
   with its values, and AutoCAD's come in. EXPLODE makes block references of them.
+- **MLEADERCOLLECT** (MLC, Annotate > Leaders > Collect, #61): the selected balloons made one,
+  their blocks in a row, a column or rows of a number you give, the first's leader to them.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).

@@ -165,6 +165,65 @@ TEST_CASE("#61 a balloon: the tag block added to the drawing, against the landin
     engine.stop();
 }
 
+TEST_CASE("#61 MLEADERCOLLECT makes the balloons one, in a row, a column or rows") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(balloon({0, 0}, {20, 10}, "1", 1));
+    engine.submit(balloon({0, 20}, {20, 30}, "2", 2));
+    engine.submit(balloon({0, 40}, {20, 50}, "3", 3));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+    engine.submit(CollectMLeadersCommand{{100, 0}, 0, 4});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("collected") != std::string::npos; }));
+    io::Document doc = dump(engine, "musacad_mleader_collect.musa");
+    REQUIRE(doc.mleaders.size() == 1);
+    const io::DocMLeader& m = doc.mleaders[0];
+    REQUIRE(m.content == std::string("1\x1E") + "2\x1E" + "3");
+    REQUIRE(m.block.pos == Vec2{100, 0});
+    REQUIRE(m.collect == 0);
+    // The leader from the first's arrowhead to the row's near side, its landing kept.
+    REQUIRE(m.vertices.front() == Vec2{0, 0});
+    REQUIRE(m.vertices.back().x == Approx(97.5));
+    REQUIRE(m.vertices.size() == 3);
+
+    // Drawn: three circles in a row, 5 apart.
+    engine.consume_snapshot();
+    for (const Vec2 c : {Vec2{100, 0}, Vec2{105, 0}, Vec2{110, 0}}) {
+        int on = 0;
+        for (const Vec2& v : engine.snapshot().line_vertices) {
+            on += std::abs(distance(v, c) - 2.5) < 0.05 ? 1 : 0;
+        }
+        INFO(c.x);
+        REQUIRE(on > 20);
+    }
+    // One undo step: the three back.
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_mleader_collect_undo.musa");
+    REQUIRE(doc.mleaders.size() == 3);
+    engine.stop();
+
+    REQUIRE(collected_offset(4, 1, {5, 5}) == Vec2{0, -20}); // a column
+    REQUIRE(collected_offset(4, 3, {5, 5}) == Vec2{5, -5});  // rows of three
+}
+
+TEST_CASE("#61 MLEADERCOLLECT asks for the location, Vertical, Horizontal or Wrap") {
+    H h;
+    h.run({"MLEADERCOLLECT"});
+    REQUIRE(h.out.prompt == "Select multileaders: ");
+    h.run({"0,0"});
+    h.proc.set_selection_count(2);
+    h.run({""});
+    REQUIRE(h.out.prompt == "Specify collected multileader location or [Vertical/Horizontal/Wrap] <Horizontal>: ");
+    h.run({"W", "N", "4"});
+    REQUIRE(h.out.prompt == "Specify collected multileader location or [Vertical/Horizontal/Wrap] <Wrap>: ");
+    h.run({"30,40"});
+    REQUIRE(h.last<CollectMLeadersCommand>()->collect == 4);
+    REQUIRE(h.last<CollectMLeadersCommand>()->at == Vec2{30, 40});
+    // Multileaders already selected: the location straight away.
+    h.run({"MLEADERCOLLECT", "H", "1,1"});
+    REQUIRE(h.last<CollectMLeadersCommand>()->collect == 0);
+}
+
 TEST_CASE("#61 DXF: a balloon goes out as its leader and a reference; AutoCAD's block content comes in") {
     io::Document doc;
     io::DocBlockDef tag;

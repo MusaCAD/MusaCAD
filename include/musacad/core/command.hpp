@@ -1754,6 +1754,14 @@ struct AddBlockMLeaderCommand {
     std::uint16_t mlstyle = 0;
     std::uint64_t group = 0;
 };
+/// MLEADERCOLLECT (#61): the selected multileaders with block content made one, the first's
+/// leader to all their blocks, laid out from `at` by `collect` (MLeaderData::collect). One undo
+/// step.
+struct CollectMLeadersCommand {
+    Vec2 at{};
+    std::uint8_t collect = 0;
+    std::uint64_t group = 0;
+};
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-
 /// definition table; the transform is insertion point + X/Y scale + rotation. The
@@ -2620,7 +2628,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
-                 AddBlockMLeaderCommand,
+                 AddBlockMLeaderCommand, CollectMLeadersCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

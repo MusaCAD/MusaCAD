@@ -11131,6 +11131,85 @@ void GeometryEngine::apply_add_block_mleader(const AddBlockMLeaderCommand& c) {
     report("Multileader placed.");
 }
 
+void GeometryEngine::apply_collect_mleaders(const CollectMLeadersCommand& c) {
+    prune_selection();
+    // The multileaders with block content, in the order selected: the first gives the leader
+    // and the block; the others' items join it.
+    std::vector<EntityHandle> picked;
+    for (const EntityHandle h : selection_) {
+        const MLeaderData* m = h.kind == EntityKind::MLeader && selectable(h) ? store_.mleader(h) : nullptr;
+        if (m != nullptr && m->content == 1) {
+            picked.push_back(h);
+        }
+    }
+    if (picked.size() < 2) {
+        report("Select two or more multileaders with blocks to collect.");
+        return;
+    }
+    const Command first_cmd = capture_entity(picked.front());
+    AddMLeaderCommand x = std::get<AddMLeaderCommand>(first_cmd);
+    std::string items(store_.string_of(store_.mleader(picked.front())->text));
+    std::size_t skipped = 0;
+    std::vector<EntityHandle> gone{picked.front()};
+    for (std::size_t i = 1; i < picked.size(); ++i) {
+        const MLeaderData* m = store_.mleader(picked[i]);
+        if (m->block != x.block_index) {
+            ++skipped; // a different block: left as it is
+            continue;
+        }
+        items += "\x1E" + std::string(store_.string_of(m->text));
+        gone.push_back(picked[i]);
+    }
+    if (gone.size() < 2) {
+        report("The multileaders selected have different blocks.");
+        return;
+    }
+    x.content = std::move(items);
+    x.collect = c.collect;
+    x.block.pos = c.at;
+    x.group = c.group;
+    // The leader goes from its arrowhead to the nearer side of the blocks, its landing (if it
+    // has one) as long as before.
+    Vec2 lo = c.at;
+    Vec2 hi = c.at;
+    if (const auto ext = block_item_extents(store_, x.block_index, x.block.height > 0.0 ? x.block.height : 1.0)) {
+        const Vec2 size = ext->second - ext->first;
+        const auto n = static_cast<std::size_t>(std::count(x.content.begin(), x.content.end(), '\x1E')) + 1;
+        lo = c.at + ext->first;
+        hi = c.at + ext->second;
+        for (std::size_t i = 1; i < n; ++i) {
+            const Vec2 off = collected_offset(i, c.collect, size);
+            lo = {std::min(lo.x, c.at.x + off.x + ext->first.x), std::min(lo.y, c.at.y + off.y + ext->first.y)};
+            hi = {std::max(hi.x, c.at.x + off.x + ext->second.x), std::max(hi.y, c.at.y + off.y + ext->second.y)};
+        }
+    }
+    const Vec2 arrow = x.vertices.front();
+    const bool left = arrow.x < (lo.x + hi.x) * 0.5;
+    const Vec2 end{left ? lo.x : hi.x, (lo.y + hi.y) * 0.5};
+    const bool landing = (x.leader_flags & LeaderForm::kLanding) != 0 && x.vertices.size() >= 2;
+    const double landing_len = landing ? distance(x.vertices[x.vertices.size() - 2], x.vertices.back()) : 0.0;
+    x.vertices = {arrow};
+    if (landing) {
+        x.vertices.push_back(end + Vec2{left ? -landing_len : landing_len, 0.0});
+    }
+    x.vertices.push_back(end);
+    x.extra_tips.clear();
+    for (const EntityHandle h : gone) {
+        const Command before = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, before);
+    }
+    const EntityHandle nh = create_indexed(x);
+    push_create_item(c.group, nh, x);
+    selection_.clear();
+    selection_.push_back(nh);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(std::to_string(gone.size()) + " multileaders collected." +
+           (skipped != 0 ? " " + std::to_string(skipped) + " with another block left as they were." : std::string()));
+}
+
 void GeometryEngine::apply_mleader_edit(const MLeaderEditCommand& c) {
     using Op = MLeaderEditCommand::Op;
     mleader_edit_changed_ = false;
@@ -21320,6 +21399,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, AddBlockMLeaderCommand>) {
                 apply_add_block_mleader(c);
+            }
+            if constexpr (std::is_same_v<T, CollectMLeadersCommand>) {
+                apply_collect_mleaders(c);
             }
             if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
                 // The nearest object under the pick other than a hatch, and the island loops of

@@ -3814,6 +3814,30 @@ private:
     static inline double s_spacing_ = 0.0;
 };
 
+/// MLEADERCOLLECT (#61): `Select multileaders:`, then `Specify collected multileader location
+/// or [Vertical/Horizontal/Wrap] <Horizontal>:` -- the multileaders with the same block made
+/// one, their blocks in a row, a column or rows (Wrap: `Specify wrap width or [Number]:`, then
+/// the number of blocks a row), the first's leader to them. One undo step.
+class MLeaderCollectCommand final : public ICommand {
+public:
+    std::string name() const override { return "MLEADERCOLLECT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Select && select_.active(); }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
+    enum class Step : std::uint8_t { Select, Location, Wrap, Number };
+    void location_prompt(CommandContext& ctx);
+    Step step_ = Step::Select;
+    SelectObjectsPhase select_;
+    bool done_ = false;
+    static inline std::uint8_t s_collect_ = 0; ///< 0 Horizontal, 1 Vertical, n Wrap: n a row
+};
+
 /// -DWGUNITS: the drawing's unit (`Unit for length <3>:` from Inches, Feet, Millimeters,
 /// Centimeters, Decimeters, Meters), the display format and precision, and whether the
 /// objects are scaled to the new unit (`Scale objects in current drawing to reflect change

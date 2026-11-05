@@ -20463,6 +20463,97 @@ void AddSelectedCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // MLEADERALIGN (issue #61)
 // ---------------------------------------------------------------------------
+void MLeaderCollectCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        location_prompt(ctx);
+        return;
+    }
+    select_.begin(ctx, "Select multileaders: ");
+}
+
+void MLeaderCollectCommand::location_prompt(CommandContext& ctx) {
+    step_ = Step::Location;
+    ctx.set_prompt(std::string("Specify collected multileader location or [Vertical/Horizontal/Wrap] <") +
+                   (s_collect_ == 1 ? "Vertical" : s_collect_ >= 2 ? "Wrap" : "Horizontal") + ">: ");
+}
+
+void MLeaderCollectCommand::selection_gesture(CommandContext& ctx) {
+    if (select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        if (!ctx.has_selection()) {
+            done_ = true;
+            return;
+        }
+        location_prompt(ctx);
+    }
+}
+
+void MLeaderCollectCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Select:
+        if (select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            if (!ctx.has_selection()) {
+                done_ = true;
+                return;
+            }
+            location_prompt(ctx);
+        }
+        return;
+    case Step::Location:
+        if (u == "V" || u == "VERTICAL") {
+            s_collect_ = 1;
+            location_prompt(ctx);
+            return;
+        }
+        if (u == "H" || u == "HORIZONTAL") {
+            s_collect_ = 0;
+            location_prompt(ctx);
+            return;
+        }
+        if (u == "W" || u == "WRAP") {
+            step_ = Step::Wrap;
+            ctx.set_prompt("Specify wrap width or [Number]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::CollectMLeadersCommand{*p, s_collect_, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    case Step::Wrap:
+        if (u == "N" || u == "NUMBER") {
+            step_ = Step::Number;
+            ctx.set_prompt("Enter the maximum number of blocks per row <" +
+                           std::to_string(s_collect_ >= 2 ? s_collect_ : 2) + ">: ");
+            return;
+        }
+        ctx.echo("Enter Number: a wrap is the number of blocks a row.");
+        return;
+    case Step::Number: {
+        int n = s_collect_ >= 2 ? s_collect_ : 2;
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 2.0 || *v > 99.0 || *v != std::floor(*v)) {
+                ctx.echo("Requires a whole number from 2 to 99.");
+                return;
+            }
+            n = static_cast<int>(*v);
+        }
+        s_collect_ = static_cast<std::uint8_t>(n);
+        location_prompt(ctx);
+        return;
+    }
+    }
+}
+
+void MLeaderCollectCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.clear_preview();
+    done_ = true;
+}
+
 void MLeaderAlignUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (ctx.has_selection()) {

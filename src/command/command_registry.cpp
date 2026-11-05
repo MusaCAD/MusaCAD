@@ -855,6 +855,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/leader.svg", "Add Leader: another leader for a multileader, to its landing.");
     reg({"AIMLEADEREDITREMOVE"}, [] { return std::make_unique<MLeaderEditUiCommand>(true, "AIMLEADEREDITREMOVE"); },
         "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
+    reg({"MLEADERCOLLECT", "MLC"}, [] { return std::make_unique<MLeaderCollectCommand>(); }, "",
+        "Collects multileaders with blocks into one, the blocks in a row, a column or rows.");
     reg({"MLEADERALIGN", "MLA"}, [] { return std::make_unique<MLeaderAlignUiCommand>(); }, "",
         "Line up the text of the selected multileaders along a direction.");
     reg({"MLEADER", "MLD"}, [] { return std::make_unique<MLeaderCommand>(); }, "assets/ribbon/leader.svg",
