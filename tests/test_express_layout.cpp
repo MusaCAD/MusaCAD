@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <variant>
@@ -22,6 +23,7 @@
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/native_format.hpp"
+#include "musacad/core/text/text_codes.hpp"
 
 using namespace musacad::core;
 using musacad::command::CommandOutput;
@@ -267,4 +269,33 @@ TEST_CASE("#77 SUPERHATCH asks for the pattern type, the block, its scale and ro
     h.run({"6,6", ""});
     REQUIRE(h.last<SuperHatchCommand>()->tile_pick == std::optional<Vec2>{Vec2{5, 5}});
     REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("#77 RTEXT's fields: a DIESEL expression's value, and a file's text read again when it changes") {
+    text::FieldContext fc;
+    fc.filename = "part.musa";
+    fc.path = "/work/drawings/part.musa";
+    fc.login = "pranay";
+    text::set_field_context(fc);
+    REQUIRE(text::expand_fields("%<\\AcDiesel $(upper,$(getvar,dwgname))>%") == "PART.MUSA");
+    REQUIRE(text::expand_fields("%<\\AcDiesel $(getvar,dwgprefix)>%") == "/work/drawings/");
+    REQUIRE(text::expand_fields("%<\\AcDiesel Sheet $(+,1,2) of 9>%") == "Sheet 3 of 9");
+    REQUIRE(text::expand_fields("%<\\AcDiesel $(if,$(eq,a,a),yes,no)>%") == "yes");
+    REQUIRE(text::expand_fields("%<\\AcDiesel $(substr,ABCDEF,2,3)>%") == "BCD");
+    REQUIRE(text::expand_fields("%<\\AcDiesel $(nosuch,1)>%") == "$(nosuch,?" "?)");
+
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_rtext.txt";
+    {
+        std::ofstream(p) << "REV A\r\nCHECKED\r\n";
+    }
+    const std::string field = "%<\\RText \"" + p.string() + "\">%";
+    REQUIRE(text::expand_fields(field) == "REV A\nCHECKED");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    {
+        std::ofstream(p) << "REV B, a longer line\n";
+    }
+    REQUIRE(text::expand_fields(field) == "REV B, a longer line");
+    std::filesystem::remove(p);
+    REQUIRE(text::expand_fields(field).find("file not found") != std::string::npos);
+    text::set_field_context(text::FieldContext{});
 }

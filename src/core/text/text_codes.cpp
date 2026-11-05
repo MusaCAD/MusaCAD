@@ -7,8 +7,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <map>
 #include <mutex>
+#include <sstream>
 #include <utility>
+#include <vector>
 
 namespace musacad::core::text {
 
@@ -216,10 +221,197 @@ std::string text_case(std::string s, std::string_view format) {
     return s;
 }
 
+/// RTEXT's file (#77): its text, read again when the file changes -- kept by its path, its
+/// size and its time, so a redraw costs a look at the file, not a read. At most 64 KB.
+std::string file_text(const std::string& path) {
+    struct Entry {
+        std::filesystem::file_time_type time;
+        std::uintmax_t size = 0;
+        std::string text;
+    };
+    static std::mutex m;
+    static std::map<std::string, Entry> cache;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(path, ec);
+    const std::uintmax_t size = ec ? 0 : std::filesystem::file_size(path, ec);
+    if (ec) {
+        return "[file not found: " + path + "]";
+    }
+    std::scoped_lock lock(m);
+    if (const auto it = cache.find(path); it != cache.end() && it->second.time == time && it->second.size == size) {
+        return it->second.text;
+    }
+    std::ifstream in(path, std::ios::binary);
+    std::string text(static_cast<std::size_t>(std::min<std::uintmax_t>(size, 64 * 1024)), '\0');
+    in.read(text.data(), static_cast<std::streamsize>(text.size()));
+    text.resize(static_cast<std::size_t>(in.gcount()));
+    std::string clean; // CR LF and CR as line breaks; the last one left out
+    for (std::size_t k = 0; k < text.size(); ++k) {
+        if (text[k] == '\r') {
+            clean += '\n';
+            if (k + 1 < text.size() && text[k + 1] == '\n') {
+                ++k;
+            }
+        } else {
+            clean += text[k];
+        }
+    }
+    while (!clean.empty() && clean.back() == '\n') {
+        clean.pop_back();
+    }
+    cache[path] = Entry{time, size, clean};
+    return clean;
+}
+
+/// DIESEL (AutoCAD's string expressions, the \AcDiesel field and RTEXT, #77): text with
+/// `$(function,argument,...)` in it, nested. The functions are getvar (DWGNAME, DWGPREFIX,
+/// LOGINNAME, CDATE, PLATFORM), upper, lower, strlen, substr, eq, if, + - * / and edtime; any
+/// other shows `$(name,??)`, as AutoCAD shows it.
+class Diesel {
+public:
+    explicit Diesel(const FieldContext& fc) : fc_(fc) {}
+    std::string eval(std::string_view s) {
+        std::string out;
+        std::size_t i = 0;
+        while (i < s.size()) {
+            if (s[i] == '$' && i + 1 < s.size() && s[i + 1] == '(') {
+                out += call(s, i);
+            } else {
+                out += s[i++];
+            }
+        }
+        return out;
+    }
+
+private:
+    // The call at s[i] ("$(" ...): evaluated, i past its ")".
+    std::string call(std::string_view s, std::size_t& i) {
+        i += 2;
+        std::vector<std::string> args{std::string()};
+        int depth = 0;
+        while (i < s.size()) {
+            const char ch = s[i];
+            if (ch == '$' && i + 1 < s.size() && s[i + 1] == '(') {
+                args.back() += call(s, i);
+                continue;
+            }
+            if (ch == '(') {
+                ++depth;
+            } else if (ch == ')') {
+                if (depth == 0) {
+                    ++i;
+                    break;
+                }
+                --depth;
+            } else if (ch == ',' && depth == 0) {
+                args.emplace_back();
+                ++i;
+                continue;
+            }
+            args.back() += ch;
+            ++i;
+        }
+        for (std::string& a : args) {
+            a = std::string(trim_ascii(a));
+        }
+        const std::string fn = upper_ascii(args.front());
+        const auto num = [&](std::size_t k) { return k < args.size() ? std::strtod(args[k].c_str(), nullptr) : 0.0; };
+        const auto fmt = [](double v) {
+            std::ostringstream o;
+            o.precision(12);
+            o << v;
+            return o.str();
+        };
+        if (fn == "GETVAR" && args.size() >= 2) {
+            const std::string var = upper_ascii(args[1]);
+            if (var == "DWGNAME") {
+                return fc_.filename;
+            }
+            if (var == "DWGPREFIX") {
+                const std::size_t slash = fc_.path.find_last_of("/\\");
+                return slash == std::string::npos ? std::string() : fc_.path.substr(0, slash + 1);
+            }
+            if (var == "LOGINNAME") {
+                return fc_.login;
+            }
+            if (var == "PLATFORM") {
+                return "Musa CAD";
+            }
+            if (var == "CDATE") {
+                return format_date(fc_.now, "yyyyMMdd.HHmmss");
+            }
+        } else if (fn == "UPPER" && args.size() >= 2) {
+            return upper_ascii(args[1]);
+        } else if (fn == "LOWER" && args.size() >= 2) {
+            std::string v = args[1];
+            for (char& c : v) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return v;
+        } else if (fn == "STRLEN" && args.size() >= 2) {
+            return std::to_string(args[1].size());
+        } else if (fn == "SUBSTR" && args.size() >= 3) {
+            const auto start = static_cast<std::size_t>(std::max(1.0, num(2))) - 1;
+            const std::size_t len = args.size() >= 4 ? static_cast<std::size_t>(std::max(0.0, num(3))) : std::string::npos;
+            return start < args[1].size() ? args[1].substr(start, len) : std::string();
+        } else if (fn == "EQ" && args.size() >= 3) {
+            return args[1] == args[2] ? "1" : "0";
+        } else if (fn == "IF" && args.size() >= 3) {
+            const bool yes = !args[1].empty() && args[1] != "0";
+            return yes ? args[2] : (args.size() >= 4 ? args[3] : std::string());
+        } else if ((fn == "+" || fn == "-" || fn == "*" || fn == "/") && args.size() >= 3) {
+            double v = num(1);
+            for (std::size_t k = 2; k < args.size(); ++k) {
+                const double w = num(k);
+                v = fn == "+" ? v + w : fn == "-" ? v - w : fn == "*" ? v * w : (w != 0.0 ? v / w : 0.0);
+            }
+            return fmt(v);
+        } else if (fn == "EDTIME" && args.size() >= 3) {
+            // AutoCAD's picture (YYYY, YY, MO, MON, MONTH, DD, D, DDD, DDDD, HH, H, MM, SS, AM/PM),
+            // as the date tokens format_date takes.
+            std::string pic = args[2];
+            const std::pair<const char*, const char*> map[] = {
+                {"YYYY", "yyyy"}, {"YY", "yy"}, {"MONTH", "MMMM"}, {"MON", "MMM"}, {"MO", "MM"}, {"DDDD", "dddd"},
+                {"DDD", "ddd"},   {"DD", "dd"}, {"HH", "HH"},      {"MM", "mm"},  {"SS", "ss"}, {"AM/PM", "tt"}};
+            std::string tokens;
+            for (std::size_t k = 0; k < pic.size();) {
+                bool hit = false;
+                for (const auto& [from, to] : map) {
+                    const std::size_t n = std::char_traits<char>::length(from);
+                    if (upper_ascii(std::string_view(pic).substr(k, n)) == from) {
+                        tokens += to;
+                        k += n;
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) {
+                    tokens += pic[k] == 'D' ? 'd' : pic[k] == 'H' ? 'H' : pic[k];
+                    ++k;
+                }
+            }
+            return format_date(fc_.now, tokens);
+        }
+        return "$(" + args.front() + ",?" "?)"; // (split: "??)" would be a trigraph)
+    }
+    const FieldContext& fc_;
+};
+
 /// One field's value: the inside of `%<...>%`, in the short form (`Date`) or AutoCAD's
 /// (`\AcVar Date \f "M/d/yyyy"`).
 std::string field_value(const FieldContext& fc, std::string_view inner) {
     inner = trim_ascii(inner);
+    // RTEXT (#77): AutoCAD's DIESEL field, and a file's text (re-read when it changes).
+    if (inner.size() > 9 && upper_ascii(inner.substr(0, 9)) == "\\ACDIESEL") {
+        return Diesel(fc).eval(trim_ascii(inner.substr(9)));
+    }
+    if (inner.size() > 6 && upper_ascii(inner.substr(0, 6)) == "\\RTEXT") {
+        std::string_view path = trim_ascii(inner.substr(6));
+        if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
+            path = path.substr(1, path.size() - 2);
+        }
+        return file_text(std::string(path));
+    }
     if (inner.size() > 6 && upper_ascii(inner.substr(0, 6)) == "\\ACVAR") {
         inner = trim_ascii(inner.substr(6));
     }
