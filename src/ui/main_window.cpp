@@ -5,6 +5,10 @@
 
 #include "musacad/core/threading/jthread.hpp"
 
+#if !defined(_WIN32)
+#include <unistd.h> // execv: the software-renderer restart (#98)
+#endif
+
 #include <array>
 #include <optional>
 #include <cmath>
@@ -74,6 +78,7 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QElapsedTimer>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QSysInfo>
@@ -444,14 +449,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // close -- a blank viewport would be worse. Queued: the signal comes from the render
     // thread. Under the self-test the text goes to stdout instead of a modal box.
     connect(viewport_, &ViewportWindow::viewportUnavailable, this, [this](const QString& reason) {
+        // An older GPU (an Intel HD 3000 has OpenGL 3.3) still draws through the software
+        // renderer, which has 4.5: start again on it rather than give up (#98).
+        if (restart_with_software_gl()) {
+            QCoreApplication::exit(0); // Windows: the new process has it from here
+            return;
+        }
+        QString text = reason;
+        if (qEnvironmentVariableIsSet("MUSACAD_SOFTWARE_GL")) {
+            text.replace(QStringLiteral("\n\nMusa CAD will close now."),
+                         QStringLiteral("\n\nThe software renderer, tried next, could not give it either.\n\n"
+                                        "Musa CAD will close now."));
+        }
         if (qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
-            std::printf("[viewport] unavailable: %s\n", reason.toStdString().c_str());
+            std::printf("[viewport] unavailable: %s\n", text.toStdString().c_str());
             std::fflush(stdout);
         } else {
-            QMessageBox::critical(this, QStringLiteral("Musa CAD cannot draw on this system"), reason);
+            QMessageBox::critical(this, QStringLiteral("Musa CAD cannot draw on this system"), text);
         }
         QCoreApplication::exit(2);
     }, Qt::QueuedConnection);
+    if (qEnvironmentVariableIsSet("MUSACAD_SOFTWARE_GL") && !qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
+        command_widget_->append_line(
+            "The graphics driver has no OpenGL 4.5, so Musa CAD is drawing with the software renderer. "
+            "It works, but large drawings are slower; a current driver or a newer GPU brings the "
+            "hardware back.");
+    }
 
     // Properties palette (PR): a dockable panel, hidden by default (the default
     // runtime state stays as before). PR toggles it; the panel edits flow back as
@@ -12354,6 +12377,58 @@ void MainWindow::set_performance_overlay(bool on) {
         viewport_->set_performance_overlay(on);
     }
     update_title();
+}
+
+bool MainWindow::restart_with_software_gl() {
+#if defined(Q_OS_MACOS)
+    return false;
+#else
+    if (qEnvironmentVariableIsSet("MUSACAD_SOFTWARE_GL") || qEnvironmentVariableIsSet("MUSACAD_FORCE_GL_PROMPT") ||
+        developer_hook_active()) {
+        return false;
+    }
+#if defined(Q_OS_WIN)
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (env.value(QStringLiteral("QT_OPENGL")) == QLatin1String("software")) {
+        return false; // already the software renderer
+    }
+    env.insert(QStringLiteral("QT_OPENGL"), QStringLiteral("software"));
+    env.insert(QStringLiteral("MUSACAD_SOFTWARE_GL"), QStringLiteral("1"));
+    QProcess restart;
+    restart.setProgram(QCoreApplication::applicationFilePath());
+    restart.setArguments(launch_arguments_);
+    restart.setProcessEnvironment(env);
+    return restart.startDetached();
+#else
+    if (qgetenv("LIBGL_ALWAYS_SOFTWARE") == "1") {
+        return false; // already the software renderer
+    }
+    // The program replaces itself (exec): a Flatpak sandbox ends with the process it started,
+    // which would take a separately started copy with it; the same process carries on. Nothing
+    // is lost -- the viewport never drew, so nothing was opened for editing yet.
+    qputenv("LIBGL_ALWAYS_SOFTWARE", "1");
+    qputenv("MUSACAD_SOFTWARE_GL", "1");
+    const QByteArray program = QFile::encodeName(QCoreApplication::applicationFilePath());
+    std::vector<QByteArray> args{program};
+    for (const QString& a : launch_arguments_) {
+        args.push_back(QFile::encodeName(a));
+    }
+    std::vector<char*> argv;
+    for (QByteArray& a : args) {
+        argv.push_back(a.data());
+    }
+    argv.push_back(nullptr);
+    std::fprintf(stderr, "[musacad_ui] no OpenGL 4.5 from the graphics driver; starting again on the software "
+                         "renderer\n");
+    std::fflush(stderr);
+    std::fflush(stdout);
+    ::execv(program.constData(), argv.data());
+    // Still here: exec failed. The message says what is needed instead.
+    qunsetenv("LIBGL_ALWAYS_SOFTWARE");
+    qunsetenv("MUSACAD_SOFTWARE_GL");
+    return false;
+#endif
+#endif
 }
 
 void MainWindow::start_update_checks() {

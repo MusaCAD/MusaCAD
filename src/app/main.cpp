@@ -190,6 +190,13 @@ int main(int argc, char* argv[]) {
     g_previous_message_handler = qInstallMessageHandler(&note_qt_message);
 
     musacad::ui::MainWindow window;
+    {
+        QStringList launch;
+        for (int i = 1; i < argc; ++i) {
+            launch << QString::fromLocal8Bit(argv[i]);
+        }
+        window.set_launch_arguments(launch); // a restart on the software renderer opens the same (#98)
+    }
     // Launch maximized (full screen) like every desktop CAD -- EXCEPT under the headless capture/
     // self-test harnesses, which set their own window geometry (a fixed width per shot kind) and
     // would be broken by a maximized window swallowing the resize(). Those all set a MUSACAD_* env

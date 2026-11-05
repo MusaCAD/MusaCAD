@@ -236,6 +236,9 @@ public:
     [[nodiscard]] static std::string crash_report_about();
     /// The reports a crash left (paths): offered to save and send, on start.
     void offer_crash_reports(const QStringList& paths);
+    /// The program's own command line (after the program name), kept by main() so that a
+    /// restart on the software renderer opens what this run was asked to (#98).
+    void set_launch_arguments(const QStringList& args) { launch_arguments_ = args; }
     /// The application menu's "Save Bug Report…": a report now, with nothing crashed.
     void save_bug_report();
 
@@ -247,6 +250,13 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    QStringList launch_arguments_;
+    /// No OpenGL 4.5 from the graphics driver (#98): run this program again on the software
+    /// renderer -- Mesa's llvmpipe on Linux, where the process replaces itself (exec), so a
+    /// Flatpak sandbox lives on; Qt's opengl32sw on Windows, as a new process -- and say whether
+    /// it did (on Linux a success does not return). Never from a run that already is that
+    /// restart, under a developer hook, or on macOS (no software renderer there gives 4.5).
+    bool restart_with_software_gl();
     void seed_demo_scene();
 
     // --- multi-document tab strip (Phase A) --------------------------------

@@ -162,6 +162,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `51,19483418,44,51084184` -- four numbers -- so no pick was taken ("Malformed coordinate").
   Musa CAD now passes numbers between its own parts with a '.', whatever the locale; what
   you type is read as before.
+- **Older graphics cards draw through the software renderer instead of crashing** (#98). A
+  GPU with less than OpenGL 4.5 (an Intel HD Graphics 3000 has 3.3) gets no context for the
+  viewport; Musa CAD 0.8.0 then crashed on the way out. It now starts again on the software
+  renderer -- Mesa's llvmpipe on Linux, opengl32sw on Windows -- and says so on the command
+  line; only if that cannot draw either does it explain what is needed and close.
 - Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
   Inscribed / Circumscribed, MLEADER's leader type, a dimension's Text, ARRAY's angles (360
   for a full circle), STRETCH's displacement (the last one); PLINE's Close works from the
