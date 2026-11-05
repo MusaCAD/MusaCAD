@@ -35,6 +35,7 @@
 #include "musacad/core/entity_bounds.hpp"
 #include "musacad/core/grips.hpp"
 #include "musacad/core/hatch.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/properties_registry.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -8429,6 +8430,21 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 lines_from_pairs(al, m->props);
                 solids_from_tris(af, m->props);
             }
+            if (m->content == 1) {
+                // Block content (#61): its blocks, references with their attribute values.
+                for (const InsertData& item : mleader_block_items(store_, *m)) {
+                    AddInsertCommand ic;
+                    ic.block = item.block;
+                    ic.pos = item.pos;
+                    ic.scale_x = item.scale_x;
+                    ic.scale_y = item.scale_y;
+                    ic.rotation = item.rotation;
+                    ic.props = m->props;
+                    ic.attribs = store_.insert_attribs(item);
+                    parts.push_back(std::move(ic));
+                }
+                break;
+            }
             AddMTextCommand mc;
             mc.block = m->text;
             mc.content = std::string(store_.string_of(m->text));
@@ -11052,6 +11068,67 @@ void GeometryEngine::apply_insert_linked_table(const InsertLinkedTableCommand& c
     dirty_ = true;
     report("Table from data link \"" + link.name + "\": " + std::to_string(t.rows) + " rows, " +
            std::to_string(t.cols) + " columns.");
+}
+
+void GeometryEngine::apply_add_block_mleader(const AddBlockMLeaderCommand& c) {
+    if (c.vertices.empty()) {
+        return;
+    }
+    // The block: the drawing's, or one of AutoCAD's standard tag blocks, added now.
+    std::optional<std::uint16_t> index;
+    for (std::size_t i = 0; i < store_.block_count(); ++i) {
+        const BlockDef* d = store_.block(static_cast<std::uint16_t>(i));
+        if (d != nullptr && same_table_name(d->name, c.block)) {
+            index = static_cast<std::uint16_t>(i);
+            break;
+        }
+    }
+    if (!index) {
+        const std::optional<BlockContent> standard = standard_tag_block(c.block);
+        if (!standard) {
+            report("Block \"" + c.block + "\" not found.");
+            return;
+        }
+        BlockDef def;
+        def.name = std::string(standard_tag_block_name(c.block));
+        def.content = *standard;
+        index = store_.add_block(def);
+    }
+    const double scale = c.scale > 0.0 ? c.scale : 1.0;
+    // Placed as AutoCAD attaches it: its extents touch the end of the landing, on the side
+    // the landing points to, centred across it.
+    const Vec2 end = c.vertices.back();
+    const Vec2 dir = c.vertices.size() >= 2 ? end - c.vertices[c.vertices.size() - 2] : Vec2{1.0, 0.0};
+    Vec2 pos = end;
+    if (const auto ext = block_item_extents(store_, *index, scale)) {
+        const auto [lo, hi] = *ext;
+        if (std::abs(dir.x) >= std::abs(dir.y)) {
+            pos = {dir.x >= 0.0 ? end.x - lo.x : end.x - hi.x, end.y - (lo.y + hi.y) * 0.5};
+        } else {
+            pos = {end.x - (lo.x + hi.x) * 0.5, dir.y >= 0.0 ? end.y - lo.y : end.y - hi.y};
+        }
+    }
+    AddMLeaderCommand m;
+    m.vertices = c.vertices;
+    m.style = c.style;
+    m.block.pos = pos;
+    m.block.height = scale;
+    for (std::size_t i = 0; i < c.values.size(); ++i) {
+        m.content += (i == 0 ? "" : "\x1F") + c.values[i];
+    }
+    m.group = c.group;
+    m.overrides = c.overrides;
+    m.leader_flags = c.leader_flags;
+    m.mlstyle = c.mlstyle;
+    m.content_type = 1;
+    m.block_index = *index;
+    const EntityHandle h = create_indexed(m);
+    push_create_item(c.group, h, m);
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Multileader placed.");
 }
 
 void GeometryEngine::apply_mleader_edit(const MLeaderEditCommand& c) {
@@ -21240,6 +21317,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, MLeaderEditCommand>) {
                 apply_mleader_edit(c);
+            }
+            if constexpr (std::is_same_v<T, AddBlockMLeaderCommand>) {
+                apply_add_block_mleader(c);
             }
             if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
                 // The nearest object under the pick other than a hatch, and the island loops of

@@ -20,6 +20,7 @@
 #include "musacad/core/image.hpp"
 #include "musacad/core/table.hpp"
 #include "musacad/core/hatch.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/spline_eval.hpp"
@@ -911,6 +912,23 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                 add_fills(arrow_c, afill);
                 add_lines(arrow_c, r.lineweight, aline);
             }
+        }
+        if (m->content == 1) {
+            // Block content (#61): its block once per item, drawn as an INSERT is.
+            std::vector<InsertSeg> bsegs;
+            std::vector<InsertFill> bfills;
+            for (const InsertData& item : mleader_block_items(store, *m)) {
+                bsegs.clear();
+                bfills.clear();
+                resolve_insert(store, item, tolerance, bsegs, &bfills);
+                for (const InsertSeg& sg : bsegs) {
+                    add_line(sg.color, sg.lineweight, sg.a, sg.b);
+                }
+                for (const InsertFill& f : bfills) {
+                    add_fills(f.color, {f.a, f.b, f.c});
+                }
+            }
+            return;
         }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));

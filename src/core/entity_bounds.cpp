@@ -14,6 +14,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 #include "musacad/core/table.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/mtext.hpp"
@@ -208,11 +209,27 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     }
     case EntityKind::MLeader: {
         const MLeaderData* m = store.mleader(h);
-        const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text),
-                                                         store.font_engine(),
-                                                         store.font_name(m->text.font));
-        out_min = lay.min;
-        out_max = lay.max;
+        if (m->content == 1) {
+            // Block content (#61): its blocks' extents.
+            out_min = out_max = m->text.pos;
+            std::vector<InsertSeg> segs;
+            for (const InsertData& item : mleader_block_items(store, *m)) {
+                segs.clear();
+                resolve_insert(store, item, kDefaultTessTolerance, segs);
+                for (const InsertSeg& sg : segs) {
+                    for (const Vec2 p : {sg.a, sg.b}) {
+                        out_min = {std::min(out_min.x, p.x), std::min(out_min.y, p.y)};
+                        out_max = {std::max(out_max.x, p.x), std::max(out_max.y, p.y)};
+                    }
+                }
+            }
+        } else {
+            const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text),
+                                                             store.font_engine(),
+                                                             store.font_name(m->text.font));
+            out_min = lay.min;
+            out_max = lay.max;
+        }
         for (const Vec2& v : store.vertices_of(*m)) {
             out_min = {std::min(out_min.x, v.x), std::min(out_min.y, v.y)};
             out_max = {std::max(out_max.x, v.x), std::max(out_max.y, v.y)};

@@ -1734,6 +1734,25 @@ struct AddMLeaderCommand {
     std::uint8_t leader_flags = 0; ///< MLeaderData::leader_flags
     std::vector<Vec2> extra_tips = {}; ///< MLEADEREDIT's added leaders, by their arrowheads
     std::uint16_t mlstyle = 0;         ///< MLeaderData::mlstyle
+    std::uint8_t content_type = 0;     ///< MLeaderData::content: 1, block `block_index` (content: its values)
+    std::uint16_t block_index = 0;
+    std::uint8_t collect = 0;          ///< MLeaderData::collect
+};
+/// MLEADER with block content (#61): a multileader along `vertices` (the landing last)
+/// showing `block` -- by name; one of AutoCAD's standard tag blocks is added to the drawing
+/// when it has none of that name -- with its attribute `values`, `scale` its size (the text
+/// height), placed against the end of the landing as AutoCAD attaches it (the block's extents
+/// touch it).
+struct AddBlockMLeaderCommand {
+    std::vector<Vec2> vertices;
+    std::string block;
+    std::vector<std::string> values;
+    double scale = 2.5;
+    std::uint16_t style = 0;
+    std::uint8_t leader_flags = 0;
+    DimOverrides overrides = {};
+    std::uint16_t mlstyle = 0;
+    std::uint64_t group = 0;
 };
 
 /// Place a block reference (INSERT) in model space. `block` indexes the block-
@@ -2601,6 +2620,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
+                 AddBlockMLeaderCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

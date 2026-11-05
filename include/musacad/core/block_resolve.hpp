@@ -50,4 +50,9 @@ inline constexpr int kMaxBlockDepth = 16;
 void resolve_insert(const GeometryStore& store, const InsertData& ins, double tolerance,
                     std::vector<InsertSeg>& out, std::vector<InsertFill>* fills = nullptr);
 
+/// Block `block`'s own shape at `scale` about its base point: its geometry, its attributes
+/// left out (no values, so no text), for measuring what it looks like.
+void resolve_block_shape(const GeometryStore& store, std::uint16_t block, double scale, double tolerance,
+                         std::vector<InsertSeg>& out);
+
 } // namespace musacad::core

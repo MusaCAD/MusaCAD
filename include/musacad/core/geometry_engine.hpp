@@ -669,6 +669,7 @@ private:
     void apply_data_link_update(const DataLinkUpdateCommand& c);
     void apply_table_export(const TableExportCommand& c);
     void apply_mleader_edit(const MLeaderEditCommand& c);
+    void apply_add_block_mleader(const AddBlockMLeaderCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);

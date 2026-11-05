@@ -695,6 +695,18 @@ bool GeometryStore::set_mleader_mlstyle(EntityHandle h, std::uint16_t style) noe
     return true;
 }
 
+bool GeometryStore::set_mleader_content(EntityHandle h, std::uint8_t content, std::uint16_t block,
+                                        std::uint8_t collect) noexcept {
+    MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
+    if (m == nullptr) {
+        return false;
+    }
+    m->content = content;
+    m->block = block;
+    m->collect = collect;
+    return true;
+}
+
 bool GeometryStore::set_mleader_extra(EntityHandle h, std::span<const Vec2> tips) {
     MLeaderData* m = h.kind == EntityKind::MLeader ? mleaders_.get(h.index, h.generation) : nullptr;
     if (m == nullptr) {

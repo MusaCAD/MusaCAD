@@ -314,4 +314,14 @@ void resolve_insert(const GeometryStore& store, const InsertData& ins, double to
     emit_block(store, bd->content, insert_matrix(ins), inherited, tolerance, 0, &values, out, fills);
 }
 
+void resolve_block_shape(const GeometryStore& store, std::uint16_t block, double scale, double tolerance,
+                         std::vector<InsertSeg>& out) {
+    const BlockDef* bd = store.block(block);
+    if (bd == nullptr) {
+        return;
+    }
+    const std::vector<std::string> none(bd->content.attdefs.size()); // an empty value draws nothing
+    emit_block(store, bd->content, Mat3::scale({scale, scale}), ResolvedProps{}, tolerance, 0, &none, out, nullptr);
+}
+
 } // namespace musacad::core

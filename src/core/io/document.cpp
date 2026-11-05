@@ -393,6 +393,10 @@ Document document_from_store(const GeometryStore& store) {
                                               std::string(store.font_name(m.text.font)),
                                               m.overrides, m.leader_flags,
                                               std::vector<Vec2>(tips.begin(), tips.end()), m.mlstyle});
+            if (const BlockDef* b = m.content == 1 ? store.block(m.block) : nullptr) {
+                doc.mleaders.back().content_block = b->name;
+                doc.mleaders.back().collect = m.collect;
+            }
         }
     }
     const auto& hatch_arena = store.hatches();
@@ -710,6 +714,15 @@ void populate_store(GeometryStore& store, const Document& doc) {
         }
         if (m.mlstyle != 0 && m.mlstyle < doc.mleader_styles.size()) {
             store.set_mleader_mlstyle(mh, m.mlstyle);
+        }
+        if (!m.content_block.empty()) {
+            for (std::size_t i = 0; i < store.block_count(); ++i) {
+                const BlockDef* def = store.block(static_cast<std::uint16_t>(i));
+                if (def != nullptr && same_table_name(def->name, m.content_block)) {
+                    store.set_mleader_content(mh, 1, static_cast<std::uint16_t>(i), m.collect);
+                    break;
+                }
+            }
         }
     }
     for (const DocHatch& h : doc.hatches) {

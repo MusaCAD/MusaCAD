@@ -147,7 +147,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const MLeaderData* m = store.mleader(h);
         const auto v = store.vertices_of(*m);
         const DimStyle* mst = store.dimstyle(m->style);
-        return AddMLeaderCommand{std::vector<Vec2>(v.begin(), v.end()),
+        AddMLeaderCommand c{std::vector<Vec2>(v.begin(), v.end()),
                                  m->style,
                                  m->text,
                                  std::string(store.string_of(m->text)),
@@ -159,6 +159,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                  m->leader_flags,
                                  std::vector<Vec2>(store.extra_tips_of(*m).begin(), store.extra_tips_of(*m).end()),
                                  m->mlstyle};
+        c.content_type = m->content;
+        c.block_index = m->block;
+        c.collect = m->collect;
+        return c;
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
@@ -421,6 +425,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 }
                 if (c.mlstyle != 0) {
                     store.set_mleader_mlstyle(handle, c.mlstyle);
+                }
+                if (c.content_type != 0) {
+                    store.set_mleader_content(handle, c.content_type, c.block_index, c.collect);
                 }
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,

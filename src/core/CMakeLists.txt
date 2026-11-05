@@ -30,7 +30,8 @@ add_library(musacad_core STATIC
     grips.cpp
     properties_registry.cpp
     linetype.cpp
-    mline.cpp)
+    mline.cpp
+    mleader_blocks.cpp)
 
 add_library(musacad::core ALIAS musacad_core)
 

@@ -73,7 +73,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 46;
+inline constexpr std::uint32_t kFormatVersion = 47;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -304,6 +304,10 @@ struct DocMLeader {
     std::uint8_t leader_flags = 0; ///< v40: MLeaderData::leader_flags
     std::vector<Vec2> extra_tips{}; ///< v40: MLEADEREDIT's added leaders, by their arrowheads
     std::uint16_t mlstyle = 0;      ///< v44: the multileader style it follows (MLeaderData::mlstyle)
+    /// v47 (#61): block content -- the block's name ("" for text); `content` holds its
+    /// attribute values (MLeaderData::content), `collect` how collected blocks are laid out.
+    std::string content_block{};
+    std::uint8_t collect = 0;
     friend bool operator==(const DocMLeader&, const DocMLeader&) = default;
 };
 

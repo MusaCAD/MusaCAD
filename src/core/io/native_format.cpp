@@ -1215,6 +1215,13 @@ std::string serialize_native(const Document& doc) {
             append_uint(s, m.mlstyle);
             s += '\n';
         }
+        if (!m.content_block.empty()) {
+            s += "MLEADERBLOCK "; // v47: block content -- how collected blocks are laid out, the name
+            append_uint(s, m.collect);
+            s += '\n';
+            s += escape(m.content_block); // own line: may contain spaces
+            s += '\n';
+        }
         if (!m.extra_tips.empty()) {
             s += "MLEADERTIPS "; // v40: MLEADEREDIT's added leaders, by their arrowheads
             append_uint(s, m.extra_tips.size());
@@ -2866,6 +2873,21 @@ IoResult parse_native(std::string_view text, Document& out) {
                 f.points.push_back({vals[i * 2], vals[i * 2 + 1]});
             }
             doc.splines.back().fit = std::move(f);
+        } else if (key == "MLEADERBLOCK") {
+            std::uint64_t v = 0;
+            if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 255) {
+                return fail("malformed MLEADERBLOCK");
+            }
+            std::string name;
+            if (!std::getline(in, name)) {
+                return fail("MLEADERBLOCK missing block name");
+            }
+            ++line_no;
+            if (!name.empty() && name.back() == '\r') {
+                name.pop_back();
+            }
+            doc.mleaders.back().content_block = unescape(name);
+            doc.mleaders.back().collect = static_cast<std::uint8_t>(v);
         } else if (key == "MLEADERSTYLEOF") {
             std::uint64_t v = 0;
             if (doc.mleaders.empty() || tok.size() != 2 || !to_uint(tok[1], v) || v > 0xFFFF) {

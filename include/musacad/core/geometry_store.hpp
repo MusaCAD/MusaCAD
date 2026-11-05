@@ -275,6 +275,13 @@ struct MLeaderData {
     EntityProps props{};
     DimOverrides overrides{}; ///< per-leader arrow override (only the arrow bits used; ByStyle default)
     std::uint16_t mlstyle = 0; ///< the multileader style it was drawn with (MLEADERSTYLE): a changed style redraws it
+    /// Block content (#61): `content` 1 shows block `block` instead of text -- at text.pos,
+    /// scaled by text.height, turned by text.rotation -- its attribute values in the text,
+    /// 0x1F between them. MLEADERCOLLECT's collected blocks are items of the text, 0x1E
+    /// between them, laid out by `collect`: 0 in a row, 1 in a column, n >= 2 in rows of n.
+    std::uint16_t block = 0;
+    std::uint8_t content = 0;
+    std::uint8_t collect = 0;
 };
 
 /// Where a multileader's added leaders meet it: the start of its landing (its last segment,
@@ -672,6 +679,8 @@ public:
     EntityHandle add_mleader(std::span<const Vec2> vertices, std::uint16_t style,
                              const MTextBlock& text, std::string_view content,
                              EntityProps props = {}, DimOverrides overrides = {});
+    /// A multileader's content: a block (MLeaderData::content 1, `block`, `collect`) or text (0).
+    bool set_mleader_content(EntityHandle h, std::uint8_t content, std::uint16_t block, std::uint8_t collect) noexcept;
     /// Create a HATCH from closed boundary loops (loop 0 = outer, the rest islands),
     /// a pattern name ("SOLID" = filled), and pattern scale/angle(radians)/origin.
     EntityHandle add_hatch(const std::vector<std::vector<Vec2>>& loops, std::string_view pattern,

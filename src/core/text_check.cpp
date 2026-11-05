@@ -301,8 +301,8 @@ TextCheckReport check_text(const GeometryStore& store, const IGeometryKernel& ke
     });
     each(store.mleaders(), EntityKind::MLeader, [&](EntityHandle h) {
         const MLeaderData* m = store.mleader(h);
-        if (m == nullptr || !shown(store, m->props)) {
-            return;
+        if (m == nullptr || !shown(store, m->props) || m->content == 1) {
+            return; // a block's attribute values are not a paragraph of text
         }
         b.paragraph("MLEADER", m->props, m->text);
         ++b.entity;
