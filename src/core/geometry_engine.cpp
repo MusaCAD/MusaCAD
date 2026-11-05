@@ -6636,36 +6636,47 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
         return;
     }
 
+    // Tangent direction: the selection's chosen direction set along the path at the first
+    // item -- every item turned by as much, the first (the selection itself) too.
+    const double turn = c.tangent ? ang0 - *c.tangent : 0.0;
+    const int rows = std::max(c.rows, 1);
     int made = 0;
     std::vector<EntityHandle> moved;
-    for (std::size_t i = 0; i < stations.size(); ++i) {
-        if (i == 0 && !c.has_base && stations[0] < 1e-12) {
-            continue; // the selection itself is the first item, where it is
-        }
-        Vec2 p;
-        double ang = 0.0;
-        sampler.at(stations[i], p, ang);
-        for (const auto& [h, original] : source) {
-            Command copy = original;
-            if (c.align) {
-                // Turn each copy by how far the tangent has swung since the FIRST
-                // station, about the shared base, so item 0 keeps the orientation the
-                // user drew and the rest follow the curve.
-                rotate_cmd(copy, base, ang - ang0);
+    for (int r = 0; r < rows; ++r) {
+        for (std::size_t i = 0; i < stations.size(); ++i) {
+            const bool first = r == 0 && i == 0;
+            if (first && !c.has_base && stations[0] < 1e-12 && turn == 0.0) {
+                continue; // the selection itself is the first item, where it is
             }
-            translate_cmd(copy, p - base);
-            if (i == 0 && array_sink_ == nullptr) {
-                // The selection itself onto the path, an edit that keeps its place in the
-                // draw order.
-                remove_indexed(h);
-                push_erase_item(c.group, h, original);
-                const EntityHandle nh = create_indexed(copy);
-                push_create_item(c.group, nh, copy);
-                moved.push_back(nh);
-                continue;
+            Vec2 p;
+            double ang = 0.0;
+            sampler.at(stations[i], p, ang);
+            // A row is the path's offset: across it, to its left for a positive spacing.
+            const Vec2 across{-std::sin(ang), std::cos(ang)};
+            p = p + across * (static_cast<double>(r) * c.row_spacing);
+            for (const auto& [h, original] : source) {
+                Command copy = original;
+                // Turn each copy by how far the tangent has swung since the FIRST station,
+                // about the shared base, so item 0 keeps the orientation the user drew (or
+                // the tangent direction asked for) and the rest follow the curve.
+                const double rot = (c.align ? ang - ang0 : 0.0) + turn;
+                if (rot != 0.0) {
+                    rotate_cmd(copy, base, rot);
+                }
+                translate_cmd(copy, p - base);
+                if (first && array_sink_ == nullptr) {
+                    // The selection itself onto the path, an edit that keeps its place in the
+                    // draw order.
+                    remove_indexed(h);
+                    push_erase_item(c.group, h, original);
+                    const EntityHandle nh = create_indexed(copy);
+                    push_create_item(c.group, nh, copy);
+                    moved.push_back(nh);
+                    continue;
+                }
+                emit_copy(copy, c.group);
+                ++made;
             }
-            emit_copy(copy, c.group);
-            ++made;
         }
     }
     if (!moved.empty()) {

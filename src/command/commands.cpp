@@ -12473,6 +12473,22 @@ double ArrayCommand::angle_between() const {
     return items_ <= 1 ? fill_ : fill_ / static_cast<double>(full ? items_ : items_ - 1);
 }
 
+core::ArrayPathCommand ArrayCommand::path_command(CommandContext& ctx) const {
+    core::ArrayPathCommand c;
+    c.pick = path_pick_;
+    c.pick_radius = ctx.pick_radius();
+    c.count = measure_ ? path_items_ : std::max(path_items_, 2);
+    c.spacing = measure_ ? path_space_ : 0.0;
+    c.auto_spacing = measure_ && path_auto_;
+    c.align = align_;
+    c.base = base_.value_or(core::Vec2{});
+    c.has_base = base_.has_value();
+    c.rows = std::max(item_rows_, 1);
+    c.row_spacing = item_row_space_;
+    c.tangent = tangent_;
+    return c;
+}
+
 void ArrayCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (!ctx.has_selection()) {
@@ -12507,11 +12523,13 @@ void ArrayCommand::begin_type(CommandContext& ctx) {
         dx_ = w * 1.5;
         dy_ = h * 1.5;
         path_space_ = dx_;
-        polar_row_space_ = std::max(dx_, dy_);
+        // Rows: rings of a polar array clear the items' widest side; a path array's rows
+        // stand one and a half items' height apart across the path.
+        item_row_space_ = type_ == Type::Path ? dy_ : std::max(dx_, dy_);
         auto_spacing_ = false;
         path_auto_ = false;
     } else {
-        dx_ = dy_ = path_space_ = polar_row_space_ = 1.0; // the engine sizes them from the selection
+        dx_ = dy_ = path_space_ = item_row_space_ = 1.0; // the engine sizes them from the selection
     }
     switch (type_) {
     case Type::Rect:
@@ -12557,21 +12575,14 @@ void ArrayCommand::preview(CommandContext& ctx) {
     switch (type_) {
     case Type::Polar:
         pv.type = 2;
-        pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, polar_rows_,
-                                           polar_row_space_};
+        pv.polar = core::ArrayPolarCommand{center_, items_, core::to_radians(fill_), rotate_, 0, item_rows_,
+                                           item_row_space_};
         pv.polar.base = base_.value_or(core::Vec2{});
         pv.polar.has_base = base_.has_value();
         break;
     case Type::Path:
         pv.type = 3;
-        pv.path.pick = path_pick_;
-        pv.path.pick_radius = ctx.pick_radius();
-        pv.path.count = measure_ ? path_items_ : std::max(path_items_, 2);
-        pv.path.spacing = measure_ ? path_space_ : 0.0;
-        pv.path.auto_spacing = measure_ && path_auto_;
-        pv.path.align = align_;
-        pv.path.base = base_.value_or(core::Vec2{});
-        pv.path.has_base = base_.has_value();
+        pv.path = path_command(ctx);
         break;
     default:
         pv.type = 1;
@@ -12589,22 +12600,14 @@ void ArrayCommand::finish(CommandContext& ctx) {
     switch (type_) {
     case Type::Polar: {
         core::ArrayPolarCommand c{center_, items_, core::to_radians(fill_), rotate_, ctx.group_id(),
-                                  polar_rows_, polar_row_space_};
+                                  item_rows_, item_row_space_};
         c.base = base_.value_or(core::Vec2{});
         c.has_base = base_.has_value();
         ctx.submit(c);
         break;
     }
     case Type::Path: {
-        core::ArrayPathCommand c;
-        c.pick = path_pick_;
-        c.pick_radius = ctx.pick_radius();
-        c.count = measure_ ? path_items_ : std::max(path_items_, 2);
-        c.spacing = measure_ ? path_space_ : 0.0;
-        c.auto_spacing = measure_ && path_auto_;
-        c.align = align_;
-        c.base = base_.value_or(core::Vec2{});
-        c.has_base = base_.has_value();
+        core::ArrayPathCommand c = path_command(ctx);
         c.group = ctx.group_id();
         ctx.submit(c);
         break;
@@ -12667,7 +12670,7 @@ void ArrayCommand::ask_next(CommandContext& ctx) {
         break;
     case Q::RowTotal:
         p = "Specify the total distance between first and last rows <" +
-            len(ctx, (type_ == Type::Polar ? polar_row_space_ * (polar_rows_ - 1) : dy_ * (rows_ - 1))) + ">: ";
+            len(ctx, (type_ == Type::Polar ? item_row_space_ * (item_rows_ - 1) : dy_ * (rows_ - 1))) + ">: ";
         break;
     case Q::RowElev: p = "Specify the incrementing elevation between rows or [Expression] <0>: "; break;
     case Q::Levels: p = "Enter the number of levels or [Expression] <" + n(levels_) + ">: "; break;
@@ -12688,11 +12691,11 @@ void ArrayCommand::ask_next(CommandContext& ctx) {
         p = "Specify the angle to fill (+=ccw, -=cw) or [EXpression] <" + degrees_text(core::to_radians(fill_)) + ">: ";
         break;
     case Q::RotItems: p = "Rotate arrayed items? [Yes/No] <" + yn(rotate_) + ">: "; break;
-    case Q::PolarRows: p = "Enter the number of rows or [Expression] <" + n(polar_rows_) + ">: "; break;
-    case Q::PolarRowSpace:
-        p = "Specify the distance between rows or [Total/Expression] <" + len(ctx, polar_row_space_) + ">: ";
+    case Q::ItemRows: p = "Enter the number of rows or [Expression] <" + n(item_rows_) + ">: "; break;
+    case Q::ItemRowSpace:
+        p = "Specify the distance between rows or [Total/Expression] <" + len(ctx, item_row_space_) + ">: ";
         break;
-    case Q::PolarRowTotal: p = "Specify the total distance between first and last rows <" + len(ctx, polar_row_space_ * (polar_rows_ - 1)) + ">: "; break;
+    case Q::ItemRowTotal: p = "Specify the total distance between first and last rows <" + len(ctx, item_row_space_ * (item_rows_ - 1)) + ">: "; break;
     case Q::Method: p = std::string("Enter path method [Divide/Measure] <") + (measure_ ? "Measure" : "Divide") + ">: "; break;
     case Q::PathSpace:
         p = "Specify the distance between items along path or [Expression] <" + len(ctx, path_space_) + ">: ";
@@ -12707,6 +12710,7 @@ void ArrayCommand::ask_next(CommandContext& ctx) {
     case Q::Align: p = "Align arrayed items to the path? [Yes/No] <" + yn(align_) + ">: "; break;
     case Q::ZDir: p = "Maintain Z direction of items? [Yes/No] <Yes>: "; break;
     case Q::Tangent: p = "Specify first point of tangent vector or [Normal]: "; break;
+    case Q::Tangent2: p = "Specify second point of tangent vector: "; break;
     case Q::CellCorner1: p = "Specify first corner of unit cell: "; break;
     case Q::CellCorner2: p = "Specify other corner: "; break;
     case Q::Expression: p = "Enter an expression: "; break;
@@ -12732,10 +12736,10 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
         v = r->x;
         have = true;
     }
-    const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::PolarRows ||
+    const auto counts = q == Q::Cols || q == Q::Rows || q == Q::Levels || q == Q::Items || q == Q::ItemRows ||
                         q == Q::PathItems || q == Q::PathDivideItems;
     const auto lengths = q == Q::ColSpace || q == Q::RowSpace || q == Q::ColTotal || q == Q::RowTotal ||
-                         q == Q::RowElev || q == Q::LevelSpace || q == Q::LevelTotal || q == Q::PolarRowSpace || q == Q::PolarRowTotal ||
+                         q == Q::RowElev || q == Q::LevelSpace || q == Q::LevelTotal || q == Q::ItemRowSpace || q == Q::ItemRowTotal ||
                          q == Q::PathSpace || q == Q::AngleBetween || q == Q::Fill;
     if (!have && (counts || lengths) && (u == "E" || u == "EX" || u == "EXPRESSION")) {
         expression_for_ = q;
@@ -12750,12 +12754,12 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
                 ask_next(ctx);
                 return;
             }
-            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::PolarRowSpace || q == Q::LevelSpace) &&
+            if ((q == Q::ColSpace || q == Q::RowSpace || q == Q::ItemRowSpace || q == Q::LevelSpace) &&
                 !(q == Q::ColSpace && queue_.size() > 1 && queue_[1] == Q::RowSpace) && (u == "T" || u == "TOTAL")) {
                 queue_.front() = q == Q::ColSpace   ? Q::ColTotal
                                  : q == Q::RowSpace ? Q::RowTotal
                                  : q == Q::LevelSpace ? Q::LevelTotal
-                                                      : Q::PolarRowTotal;
+                                                      : Q::ItemRowTotal;
                 ask_next(ctx);
                 return;
             }
@@ -12859,11 +12863,11 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
             rotate_ = !array_kw(u, "N", "NO");
         }
         break;
-    case Q::PolarRows: polar_rows_ = have ? iv : polar_rows_; break;
-    case Q::PolarRowSpace: polar_row_space_ = have ? v : polar_row_space_; break;
-    case Q::PolarRowTotal:
-        if (have && polar_rows_ > 1) {
-            polar_row_space_ = v / (polar_rows_ - 1);
+    case Q::ItemRows: item_rows_ = have ? iv : item_rows_; break;
+    case Q::ItemRowSpace: item_row_space_ = have ? v : item_row_space_; break;
+    case Q::ItemRowTotal:
+        if (have && item_rows_ > 1) {
+            item_row_space_ = v / (item_rows_ - 1);
         }
         break;
     case Q::Method:
@@ -12898,11 +12902,34 @@ void ArrayCommand::answer(CommandContext& ctx, const std::string& text) {
         break;
     case Q::ZDir:
         break; // a 2D drawing's items keep their Z direction
-    case Q::Tangent:
-        if (!t.empty()) {
-            ctx.echo("The items keep the direction they have at the start of the path.");
+    case Q::Tangent: {
+        // Two points on the selection: that direction is set along the path at the first
+        // item. Normal: the selection as drawn (a 2D drawing's normal is its Z).
+        if (array_kw(u, "N", "NORMAL")) {
+            tangent_.reset();
+            break;
         }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        tangent_from_ = *p;
+        ctx.set_last_point(*p);
+        queue_.insert(queue_.begin() + 1, Q::Tangent2);
         break;
+    }
+    case Q::Tangent2: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        if (core::length(*p - tangent_from_) < 1e-12) {
+            ctx.echo("The two points of the tangent vector must differ.");
+            return;
+        }
+        tangent_ = std::atan2(p->y - tangent_from_.y, p->x - tangent_from_.x);
+        break;
+    }
     case Q::CellCorner1: {
         const auto p = read_point(ctx, text);
         if (!p) {
@@ -13026,7 +13053,7 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (array_kw(u, "F", "FILL ANGLE")) {
             ask(ctx, {Q::Fill});
         } else if (array_kw(u, "ROW", "ROWS")) {
-            ask(ctx, {Q::PolarRows, Q::PolarRowSpace, Q::RowElev});
+            ask(ctx, {Q::ItemRows, Q::ItemRowSpace, Q::RowElev});
         } else if (array_kw(u, "ROT", "ROTATE ITEMS")) {
             ask(ctx, {Q::RotItems});
         } else {
@@ -13046,7 +13073,7 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
             ask(ctx, {Q::PathDivideItems});
         }
     } else if (array_kw(u, "R", "ROWS")) {
-        ctx.echo("A path array here has one row.");
+        ask(ctx, {Q::ItemRows, Q::ItemRowSpace, Q::RowElev});
     } else if (array_kw(u, "A", "ALIGN ITEMS")) {
         ask(ctx, {Q::Align});
     } else if (array_kw(u, "Z", "Z DIRECTION")) {

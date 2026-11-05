@@ -46,6 +46,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   filtered by name; a value typed in is set as the variable's own command sets it.
 - **LAYOUTMERGE** (#77): layouts made one -- each layout's objects onto the destination's
   sheet, where they were, and the layout deleted.
+- **ARRAYPATH's Rows and Tangent direction** (#51). Rows repeat the items alongside the path,
+  each row the path's offset by the distance between rows (to its left, or its right when
+  negative); `Total` takes the distance from the first row to the last. Tangent direction
+  takes two points on the selection, and that direction is laid along the path at the first
+  item, every item turned with it; Normal leaves the selection as drawn. Before, Rows said a
+  path array has one row, and the tangent vector was asked but not used.
 - **Multilines inside blocks** (#45) -- BLOCK takes multilines in with the rest, and a block
   draws them wherever it is inserted, each line in its colour and linetype, filled and cut as
   the multiline is. EXPLODE (and REFEDIT) gives them back as multilines, a mirrored reference's

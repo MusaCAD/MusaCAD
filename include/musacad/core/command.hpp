@@ -1226,6 +1226,13 @@ struct ArrayPathCommand {
     std::uint64_t group = 0;
     /// Measure's spacing one and a half times the selection's width (ARRAYPATH's default).
     bool auto_spacing = false;
+    /// Rows (#51): the items repeated `rows` times, each row `row_spacing` from the last
+    /// across the path -- to its left, to the right when negative -- as the path's offsets.
+    int rows = 1;
+    double row_spacing = 0.0;
+    /// Tangent direction (#51): the direction (radians) in the selection that is set along the
+    /// path at the first item, every item turned with it. None: the selection as drawn.
+    std::optional<double> tangent;
 };
 
 /// -HATCHEDIT on the selected hatches: Disassociate (they no longer follow their

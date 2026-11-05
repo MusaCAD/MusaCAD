@@ -16,6 +16,7 @@
 #include <cmath>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -61,13 +62,14 @@ bool has_vertex_near(const RenderSnapshot& s, Vec2 p, double tol) {
                        [&](const Vec2& v) { return length(v - p) <= tol; });
 }
 
-struct SilentOutput : musacad::command::CommandOutput {
+struct PromptOutput : musacad::command::CommandOutput {
+    std::string prompt; ///< the last one
     void append_line(const std::string&) override {}
-    void set_prompt(const std::string&) override {}
+    void set_prompt(const std::string& p) override { prompt = p; }
 };
 struct ProcHarness {
     std::vector<Command> cmds;
-    SilentOutput out;
+    PromptOutput out;
     musacad::command::CommandProcessor proc{
         [this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
 };
@@ -543,5 +545,126 @@ TEST_CASE("ARRAY: every array command asks Select objects with an empty selectio
         h.proc.submit_line("");               // Enter with nothing chosen
         REQUIRE(h.cmds.empty());
         REQUIRE(!h.proc.has_active_command()); // it ended rather than prompting for the array
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path -- rows and tangent direction (#51)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ARRAY: a path array's rows run alongside the path, to its left or its right (#51)") {
+    for (const double spacing : {10.0, -10.0}) {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1}); // the path, running +X
+        engine.submit(AddCircleCommand{{0, 50}, 2.0, 2});   // the item
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() > 4; }));
+        engine.submit(SelectPickCommand{{0, 52}, 1.0, false});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+        ArrayPathCommand c;
+        c.pick = {50.0, 0.0};
+        c.pick_radius = 1.0;
+        c.count = 3; // Divide: 0, 50, 100
+        c.align = false;
+        c.base = {0.0, 50.0};
+        c.has_base = true;
+        c.rows = 2;
+        c.row_spacing = spacing;
+        c.group = 4;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("Path array created") != std::string::npos; }));
+        engine.consume_snapshot();
+        const RenderSnapshot& s = engine.snapshot();
+        INFO(spacing);
+        for (const double x : {0.0, 50.0, 100.0}) {
+            REQUIRE(circles_near(s, {x, 0.0}, 2.05) > 0);     // the first row, on the path
+            REQUIRE(circles_near(s, {x, spacing}, 2.05) > 0); // the second, beside it
+            REQUIRE(circles_near(s, {x, -spacing}, 2.05) == 0);
+        }
+        engine.stop();
+    }
+}
+
+TEST_CASE("ARRAY: a path array's tangent direction is set along the path at the first item (#51)") {
+    // A horizontal 4-long line as the item and a path running straight up: its direction
+    // (0 degrees) given as the tangent vector, every item stands along the path.
+    for (const bool with_tangent : {true, false}) {
+        GeometryEngine engine;
+        engine.start();
+        engine.submit(AddLineCommand{{0, 0}, {0, 100}, 1});   // the path, running +Y
+        engine.submit(AddLineCommand{{50, 50}, {54, 50}, 2}); // the item
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+        engine.submit(SelectPickCommand{{52, 50}, 0.5, false});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+        ArrayPathCommand c;
+        c.pick = {0.0, 50.0};
+        c.pick_radius = 1.0;
+        c.count = 2; // Divide: 0 and 100
+        c.align = true;
+        c.base = {50.0, 50.0};
+        c.has_base = true;
+        if (with_tangent) {
+            c.tangent = 0.0;
+        }
+        c.group = 4;
+        engine.submit(c);
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("Path array created") != std::string::npos; }));
+        engine.consume_snapshot();
+        const RenderSnapshot& s = engine.snapshot();
+        INFO(with_tangent);
+        for (const double y : {0.0, 100.0}) {
+            REQUIRE(has_vertex_near(s, {0, y}, 1e-6));
+            // Along the path with the tangent vector; as drawn (across it) without.
+            REQUIRE(has_vertex_near(s, {0, y + 4}, 1e-6) == with_tangent);
+            REQUIRE(has_vertex_near(s, {4, y}, 1e-6) == !with_tangent);
+        }
+        engine.stop();
+    }
+}
+
+TEST_CASE("ARRAYPATH asks for the rows and the tangent vector (#51)") {
+    ProcHarness h;
+    h.proc.set_selection_count(1);
+    h.proc.set_selection_size({4, 2});
+    h.proc.submit_line("ARRAYPATH");
+    h.proc.submit_line("50,0"); // the path
+    h.proc.submit_line("R");
+    REQUIRE(h.out.prompt == "Enter the number of rows or [Expression] <1>: ");
+    h.proc.submit_line("3");
+    REQUIRE(h.out.prompt.rfind("Specify the distance between rows or [Total/Expression] <3", 0) == 0);
+    h.proc.submit_line("T");
+    h.proc.submit_line("10"); // the total: 5 between rows
+    REQUIRE(h.out.prompt.rfind("Specify the incrementing elevation between rows", 0) == 0);
+    h.proc.submit_line("");
+    h.proc.submit_line("T");
+    REQUIRE(h.out.prompt == "Specify first point of tangent vector or [Normal]: ");
+    h.proc.submit_line("0,0");
+    REQUIRE(h.out.prompt == "Specify second point of tangent vector: ");
+    h.proc.submit_line("0,5");
+    h.proc.submit_line("");
+    const ArrayPathCommand* ap = nullptr;
+    for (const Command& c : h.cmds) {
+        if (const auto* p = std::get_if<ArrayPathCommand>(&c)) {
+            ap = p;
+        }
+    }
+    REQUIRE(ap != nullptr);
+    REQUIRE(ap->rows == 3);
+    REQUIRE(ap->row_spacing == Approx(5.0));
+    REQUIRE(ap->tangent.has_value());
+    REQUIRE(*ap->tangent == Approx(kPi / 2.0));
+
+    // Normal takes the tangent vector back.
+    ProcHarness n;
+    n.proc.set_selection_count(1);
+    n.proc.submit_line("ARRAYPATH");
+    n.proc.submit_line("50,0");
+    n.proc.submit_line("T");
+    n.proc.submit_line("N");
+    n.proc.submit_line("");
+    for (const Command& c : n.cmds) {
+        if (const auto* p = std::get_if<ArrayPathCommand>(&c)) {
+            REQUIRE_FALSE(p->tangent.has_value());
+        }
     }
 }

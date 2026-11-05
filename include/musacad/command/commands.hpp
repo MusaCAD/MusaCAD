@@ -4659,8 +4659,8 @@ private:
     /// The questions an option asks, in turn.
     enum class Q {
         Assoc, Base, Cols, Rows, ColSpace, RowSpace, ColTotal, RowTotal, RowElev, Levels, LevelSpace,
-        LevelTotal, Items, AngleBetween, Fill, RotItems, PolarRows, PolarRowSpace, PolarRowTotal, Method, PathSpace,
-        PathItems, PathDivideItems, Align, ZDir, Tangent, CellCorner1, CellCorner2, Expression,
+        LevelTotal, Items, AngleBetween, Fill, RotItems, ItemRows, ItemRowSpace, ItemRowTotal, Method, PathSpace,
+        PathItems, PathDivideItems, Align, ZDir, Tangent, Tangent2, CellCorner1, CellCorner2, Expression,
     };
     void begin(CommandContext& ctx);
     void begin_type(CommandContext& ctx);
@@ -4671,6 +4671,8 @@ private:
     void preview(CommandContext& ctx);
     void finish(CommandContext& ctx);
     [[nodiscard]] double angle_between() const;
+    /// The path array as it stands, for the preview and the result alike.
+    [[nodiscard]] core::ArrayPathCommand path_command(CommandContext& ctx) const;
     [[nodiscard]] std::string len(CommandContext& ctx, double v) const;
 
     Type type_ = Type::Ask;
@@ -4693,8 +4695,8 @@ private:
     int items_ = 6;
     double fill_ = 360.0; ///< degrees, + counter-clockwise
     bool rotate_ = true;
-    int polar_rows_ = 1;
-    double polar_row_space_ = 0.0;
+    int item_rows_ = 1; ///< rows of a polar array (rings) or a path array (along the path)
+    double item_row_space_ = 0.0;
     // Path
     core::Vec2 path_pick_{};
     bool measure_ = true;
@@ -4702,6 +4704,8 @@ private:
     bool path_auto_ = true;
     int path_items_ = 0; ///< 0: as many as the path holds (Measure); Divide makes at least 2
     bool align_ = true;
+    core::Vec2 tangent_from_{};       ///< Tangent direction's first point
+    std::optional<double> tangent_{}; ///< ... and the direction to its second; none: Normal
     std::optional<core::Vec2> base_{};
     bool done_ = false;
 };

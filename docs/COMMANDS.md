@@ -295,7 +295,7 @@ commands (Ribbon Phase A):
 | ARRAY (asks the type: Rectangular / PAth / POlar) | AR, -ARRAY | Implemented |
 | ARRAYRECT (rows, columns, spacings; the Array window has the angle of the axes) | ARRAYRECT | Implemented |
 | ARRAYPOLAR (centre, count, fill angle, rotate items) | ARRAYPOLAR | Implemented |
-| ARRAYPATH (Divide / Measure, align to path) | ARRAYPATH | Implemented |
+| ARRAYPATH (Divide / Measure, align to path, rows, tangent direction) | ARRAYPATH | Implemented |
 | ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
 | POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
 | RECTANGLE [Chamfer] / [Fillet] corner options (session defaults, last set wins) | REC | Implemented |
@@ -390,6 +390,13 @@ upright copies.
   nothing is doubled at the seam.
 - **Measure** -- place an item every given distance, optionally capped by an item count.
   Stations never run past the end of the path.
+
+Its **Rows** repeat the items alongside the path, as the path's offsets: `Enter the number
+of rows or [Expression] <1>:`, `Specify the distance between rows or [Total/Expression]:`
+(a positive distance to the left of the path's direction, a negative one to the right).
+**Tangent direction** -- `Specify first point of tangent vector or [Normal]:` and the
+second point -- names the direction in the selection that is laid along the path at the
+first item; every item turns with it. Normal leaves the selection as drawn.
 
 The **base point** is AutoCAD's: by default the end of the path curve, so the selection
 stays where it is as the first item and the others keep its offset from the path; a base
