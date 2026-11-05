@@ -20,6 +20,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   dimensions stay associative in AutoCAD and when the file is opened again. Opening an AutoCAD
   drawing, the dimensions it has associated follow their objects and the others do not, as
   there.
+- **Hatch association in DXF** (#41): an associative hatch is written as one, each of its
+  boundaries naming the objects it lies on, as AutoCAD writes them. Before, every hatch went
+  out as not associative and came back that way.
 - **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
 - **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
   offers, negative for Through).

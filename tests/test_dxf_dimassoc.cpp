@@ -294,3 +294,98 @@ TEST_CASE("#59 a polyline's vertex is named by its segment, and an arc's centre 
     REQUIRE(arc_seen);
     std::filesystem::remove(p);
 }
+
+TEST_CASE("#41 an associative hatch's loops name the objects they lie on, and it is associative again") {
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / "musacad_hatchassoc.dxf";
+    const std::vector<Vec2> rect{{0, 0}, {40, 0}, {40, 20}, {0, 20}};
+    {
+        GeometryEngine engine;
+        engine.start();
+        AddPolylineCommand pl;
+        pl.points = rect;
+        pl.closed = true;
+        pl.group = 1;
+        engine.submit(pl);
+        AddHatchCommand h;
+        h.loops = {rect};
+        h.group = 2;
+        engine.submit(h);
+        // One on nothing, and one that is not associative.
+        AddHatchCommand free;
+        free.loops = {{{100, 0}, {110, 0}, {110, 10}}};
+        free.group = 3;
+        engine.submit(free);
+        AddHatchCommand fixed = h;
+        fixed.unassoc = true;
+        fixed.group = 4;
+        engine.submit(fixed);
+        save_dxf_from(engine, p);
+        engine.stop();
+    }
+    const auto ps = pairs_of(p.string());
+    std::string polyline;
+    std::vector<std::string> hatches;
+    for (std::size_t i = 0; i + 1 < ps.size(); ++i) {
+        if (ps[i].first == 0 && ps[i + 1].first == 5) {
+            if (ps[i].second == "LWPOLYLINE") {
+                polyline = ps[i + 1].second;
+            } else if (ps[i].second == "HATCH") {
+                hatches.push_back(ps[i + 1].second);
+            }
+        }
+    }
+    REQUIRE(hatches.size() == 3);
+    const auto first = record(ps, hatches[0]);
+    REQUIRE(values(first, 71) == std::vector<std::string>{"1"});
+    REQUIRE(values(first, 97) == std::vector<std::string>{"1"});
+    REQUIRE(values(first, 330).back() == polyline); // the loop's object, after the owner
+    // The polyline carries the hatch as a reactor.
+    const auto pr = record(ps, polyline);
+    const auto r = std::find(pr.begin(), pr.end(), std::pair<int, std::string>{102, "{ACAD_REACTORS"});
+    REQUIRE(r != pr.end());
+    REQUIRE(std::next(r)->second == hatches[0]);
+    for (const std::size_t k : {std::size_t{1}, std::size_t{2}}) {
+        const auto other = record(ps, hatches[k]);
+        REQUIRE(values(other, 71) == std::vector<std::string>{"0"});
+        REQUIRE(values(other, 97) == std::vector<std::string>{"0"});
+    }
+
+    // Opened again: the first hatch follows its polyline.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(OpenDocumentCommand{p.string(), true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.document_version > 0; }));
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 4; }));
+    EntityHandle boundary{};
+    for (const EntityHandle h : engine.snapshot().selection) {
+        boundary = h.kind == EntityKind::Polyline ? h : boundary;
+    }
+    engine.submit(SelectHandleCommand{boundary});
+    engine.submit(MoveSelectionCommand{{5, 0}, 7});
+    const std::filesystem::path q = std::filesystem::temp_directory_path() / "musacad_hatchassoc2.dxf";
+    save_dxf_from(engine, q);
+    engine.stop();
+    io::Document doc;
+    REQUIRE(io::load_dxf(q.string(), doc).ok);
+    REQUIRE(doc.hatches.size() == 3);
+    int followed = 0;
+    int stayed = 0;
+    for (const io::DocHatch& h : doc.hatches) {
+        const double x = h.loops[0][0].x;
+        if (x > 50.0) {
+            continue; // the one on nothing
+        }
+        if (h.unassoc) {
+            REQUIRE(x == Approx(0.0)); // not associative: it stayed
+            ++stayed;
+        } else {
+            REQUIRE(x == Approx(5.0)); // moved with the polyline
+            ++followed;
+        }
+    }
+    REQUIRE(followed == 1);
+    REQUIRE(stayed == 1);
+    std::filesystem::remove(p);
+    std::filesystem::remove(q);
+}

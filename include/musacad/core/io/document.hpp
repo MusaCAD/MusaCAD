@@ -110,6 +110,15 @@ struct DocDimRef {
     double param = 0.0;
     friend bool operator==(const DocDimRef&, const DocDimRef&) = default;
 };
+/// DXF only (#41): an object one boundary loop of an associative hatch lies on, as AutoCAD
+/// names it in the loop (97, 330). The engine lists them when it writes DXF.
+struct DocHatchRef {
+    std::uint32_t hatch = 0; ///< the hatch's index in Document::hatches
+    std::uint32_t loop = 0;
+    std::uint8_t kind = 0;   ///< the object's EntityKind
+    std::uint32_t index = 0; ///< the object's index among its kind
+    friend bool operator==(const DocHatchRef&, const DocHatchRef&) = default;
+};
 /// An ellipse / elliptical arc (v22): centre, major half-axis, ratio, parameter range.
 struct DocEllipse {
     Vec2 center;
@@ -482,6 +491,7 @@ struct Document {
     std::vector<VportConfig> saved_vports; ///< VPORTS Save         ///< named views (v24; not in entity_count)
     std::vector<DocGroup> groups;         ///< groups (v24; members by kind + order; not in entity_count)
     std::vector<DocDimRef> dim_refs;      ///< DXF only: written as DIMASSOC objects (#59)
+    std::vector<DocHatchRef> hatch_refs;  ///< DXF only: each hatch loop's boundary objects (#41)
 
     std::vector<DocPoint> points;
     std::vector<DocXline> xlines;        ///< construction lines (v21)

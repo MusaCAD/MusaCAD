@@ -33,6 +33,7 @@ namespace musacad::core {
 
 namespace io {
 struct DocDimRef;
+struct DocHatchRef;
 } // namespace io
 
 class IFontEngine;
@@ -524,6 +525,8 @@ private:
     /// DXF (#59): the objects the associative dimensions' points are on, as AutoCAD's
     /// DIMASSOC objects name them.
     [[nodiscard]] std::vector<io::DocDimRef> dim_refs_for_dxf() const;
+    /// DXF (#41): the objects each boundary loop of the associative hatches lies on.
+    [[nodiscard]] std::vector<io::DocHatchRef> hatch_refs_for_dxf() const;
     /// Those not `skip`ped with points in [lo, hi] that `follows` says go along.
     [[nodiscard]] Followers collect_followers(const std::function<bool(EntityHandle)>& skip, Vec2 lo, Vec2 hi,
                                               const std::function<bool(Vec2, std::uint8_t)>& follows) const;

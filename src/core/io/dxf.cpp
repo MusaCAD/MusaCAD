@@ -871,6 +871,7 @@ struct WriterRefs {
     std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> reactors_on; ///< object key -> DIMASSOCs
     std::unordered_map<std::uint32_t, std::size_t> assoc_of_dim;               ///< dimension -> dim_assocs
     std::unordered_map<std::uint64_t, std::uint64_t> handle_of;                ///< object key -> its handle
+    std::unordered_map<std::uint32_t, std::uint64_t> hatch_handle;             ///< associative hatch -> its handle
     std::size_t entities_begin = 0;
     std::size_t blocks_begin = 0;
     std::size_t blocks_end = 0;
@@ -928,6 +929,23 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             on.push_back(a.assoc);
         }
     }
+    // An associative hatch (#41): its handle given now, so the objects its loops lie on can
+    // carry it as a reactor; they are written before the hatches.
+    refs.hatch_handle.clear();
+    for (const DocHatchRef& r : doc.hatch_refs) {
+        if (r.hatch >= doc.hatches.size() || doc.hatches[r.hatch].pattern_name == "WIPEOUT" ||
+            doc.hatches[r.hatch].unassoc) {
+            continue;
+        }
+        auto [it, fresh] = refs.hatch_handle.try_emplace(r.hatch, 0);
+        if (fresh) {
+            it->second = g_handle++;
+        }
+        std::vector<std::uint64_t>& on = refs.reactors_on[key_of(static_cast<EntityKind>(r.kind), r.index)];
+        if (std::find(on.begin(), on.end(), it->second) == on.end()) {
+            on.push_back(it->second);
+        }
+    }
     // An entity's handle, then the DIMASSOC objects it is measured by (its reactors) or, for a
     // dimension, the dictionary that holds its DIMASSOC, then its properties.
     const auto emit_props_at = [&](EntityKind kind, std::size_t index, const EntityProps& props) {
@@ -970,7 +988,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // minor/major ratio, 41/42 start/end parameters (radians) -- our exact definition.
     for (const DocEllipse& e : doc.ellipses) {
         code(s, 0, "ELLIPSE");
-        emit_props(s, doc, e.props);
+        emit_props_at(EntityKind::Ellipse, static_cast<std::size_t>(&e - doc.ellipses.data()), e.props);
         code(s, 100, "AcDbEllipse");
         code_d(s, 10, e.center.x);
         code_d(s, 20, e.center.y);
@@ -999,7 +1017,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             fit_pts.push_back(fit_pts.front());
         }
         code(s, 0, "SPLINE");
-        emit_props(s, doc, sp.props);
+        emit_props_at(EntityKind::Spline, static_cast<std::size_t>(&sp - doc.splines.data()), sp.props);
         code(s, 100, "AcDbSpline");
         code(s, 70, "8");
         code(s, 71, std::to_string(deg).c_str());
@@ -1632,13 +1650,37 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
     }
     // A hatch, in model space or inside a block definition.
-    const auto emit_hatch = [&](const DocHatch& h) {
+    // A model-space hatch is `model` (its index in the Document): an associative one's loops
+    // name the objects they lie on, which carry it back as a reactor.
+    constexpr std::size_t kInBlock = static_cast<std::size_t>(-1);
+    const auto emit_hatch = [&](const DocHatch& h, std::size_t model) {
         if (h.pattern_name == "WIPEOUT") {
             return; // written as a WIPEOUT on its own
         }
         const bool gradient = h.pattern_name == "GRADIENT";
+        const auto own = model != kInBlock ? refs.hatch_handle.find(static_cast<std::uint32_t>(model))
+                                           : refs.hatch_handle.end();
+        const bool associative = own != refs.hatch_handle.end();
+        // Each loop's boundary objects, by their handles (written before the hatches).
+        std::vector<std::vector<std::uint64_t>> sources(h.loops.size());
+        if (associative) {
+            for (const DocHatchRef& r : doc.hatch_refs) {
+                if (r.hatch != model || r.loop >= sources.size()) {
+                    continue;
+                }
+                const auto oh = refs.handle_of.find(key_of(static_cast<EntityKind>(r.kind), r.index));
+                if (oh != refs.handle_of.end()) {
+                    sources[r.loop].push_back(oh->second);
+                }
+            }
+        }
         code(s, 0, "HATCH");
-        emit_props(s, doc, h.props);
+        if (associative) {
+            code(s, 5, handle_hex(own->second));
+            emit_props_body(s, doc, h.props);
+        } else {
+            emit_props(s, doc, h.props);
+        }
         code(s, 100, "AcDbHatch");
         code_d(s, 10, 0.0); // elevation point + normal (planar at z=0)
         code_d(s, 20, 0.0);
@@ -1648,7 +1690,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         code_d(s, 230, 1.0);
         code(s, 2, gradient ? std::string("SOLID") : h.pattern_name);
         code_i(s, 70, (h.pattern_name == "SOLID" || gradient) ? 1 : 0); // solid-fill flag
-        code_i(s, 71, 0);                                  // non-associative
+        code_i(s, 71, associative ? 1 : 0);                // associative: its loops name their objects
         code_i(s, 91, static_cast<long>(h.loops.size()));  // boundary path count
         for (std::size_t i = 0; i < h.loops.size(); ++i) {
             const std::vector<Vec2>& loop = h.loops[i];
@@ -1659,6 +1701,10 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const Vec2& v : loop) {
                 code_d(s, 10, v.x);
                 code_d(s, 20, v.y);
+            }
+            code_i(s, 97, static_cast<long>(sources[i].size())); // the loop's boundary objects
+            for (const std::uint64_t o : sources[i]) {
+                code(s, 330, handle_hex(o));
             }
         }
         code_i(s, 75, 0);  // hatch style = normal (odd parity)
@@ -1742,7 +1788,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
     };
     for (const DocHatch& h : doc.hatches) {
-        emit_hatch(h);
+        emit_hatch(h, static_cast<std::size_t>(&h - doc.hatches.data()));
     }
     // Model-space block references.
     const auto emit_insert = [&](const DocInsert& in) {
@@ -2011,7 +2057,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                 emit_mtext(m.block, m.content, m.props);
             }
             for (const DocHatch& h : b.hatches) {
-                emit_hatch(h);
+                emit_hatch(h, kInBlock);
             }
             for (const DocAttDef& a : b.attdefs) {
                 code(s, 0, "ATTDEF");

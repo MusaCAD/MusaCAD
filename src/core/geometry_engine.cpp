@@ -2361,6 +2361,57 @@ std::vector<io::DocDimRef> GeometryEngine::dim_refs_for_dxf() const {
     return out;
 }
 
+std::vector<io::DocHatchRef> GeometryEngine::hatch_refs_for_dxf() const {
+    std::vector<io::DocHatchRef> out;
+    std::vector<EntityHandle> cand;
+    std::vector<Grip> grips;
+    const auto& hatches = store_.hatches();
+    std::uint32_t doc_index = 0; // the hatch's place in the Document: live ones in slot order
+    for (std::uint32_t i = 0; i < hatches.slot_count(); ++i) {
+        if (!hatches.alive(i)) {
+            continue;
+        }
+        const std::uint32_t hi = doc_index++;
+        const HatchData& hd = hatches.data()[i];
+        if (hd.unassoc) {
+            continue;
+        }
+        const std::vector<std::vector<Vec2>> loops = store_.hatch_loops(hd);
+        for (std::uint32_t l = 0; l < loops.size(); ++l) {
+            // The objects a vertex of the loop is on (at one of their grips or along them), in
+            // the order met; each once.
+            std::vector<EntityHandle> on;
+            for (const Vec2 p : loops[l]) {
+                const double tol = assoc_tol(p);
+                cand.clear();
+                grid_.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
+                for (const EntityHandle c : cand) {
+                    if (!assoc_target(c.kind) || !store_.is_valid(c) ||
+                        std::find(on.begin(), on.end(), c) != on.end()) {
+                        continue;
+                    }
+                    const EntityProps* cp = store_.props(c);
+                    if (cp == nullptr || cp->space() != hd.props.space()) {
+                        continue;
+                    }
+                    grips.clear();
+                    grips_of(store_, c, grips);
+                    const bool at_grip = std::any_of(grips.begin(), grips.end(),
+                                                     [&](const Grip& g) { return distance(g.pos, p) <= tol; });
+                    Vec2 q;
+                    if (at_grip || (kernel_.closest_point(store_, c, p, q) && distance(q, p) <= tol)) {
+                        on.push_back(c);
+                    }
+                }
+            }
+            for (const EntityHandle c : on) {
+                out.push_back({hi, l, static_cast<std::uint8_t>(c.kind), io::document_index(store_, c)});
+            }
+        }
+    }
+    return out;
+}
+
 GeometryEngine::Followers GeometryEngine::followers_on(const std::vector<EntityHandle>& edited) const {
     std::unordered_set<std::uint64_t> in_edit;
     bool targets = false;
@@ -19027,7 +19078,8 @@ void GeometryEngine::apply_one(const Command& command) {
                 }
                 io::Document doc = io::document_from_store(store_);
                 if (c.dxf) {
-                    doc.dim_refs = dim_refs_for_dxf(); // AutoCAD's DIMASSOC objects (#59)
+                    doc.dim_refs = dim_refs_for_dxf();     // AutoCAD's DIMASSOC objects (#59)
+                    doc.hatch_refs = hatch_refs_for_dxf(); // and its hatches' boundary objects (#41)
                 }
                 const io::IoResult r =
                     c.dxf ? io::save_dxf(doc, c.path) : io::save_native(doc, c.path);
