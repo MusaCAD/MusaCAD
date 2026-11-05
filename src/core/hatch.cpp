@@ -4,6 +4,7 @@
 #include "musacad/core/hatch.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -367,6 +368,95 @@ std::optional<std::vector<Vec2>> trace_boundary(const std::vector<Segment>& segs
         }
     }
     return best;
+}
+
+namespace {
+struct GradientName {
+    GradientShape shape;
+    std::string_view pattern;
+    std::string_view dxf;
+};
+constexpr GradientName kGradientNames[] = {
+    {GradientShape::Linear, "GR_LINEAR", "LINEAR"},
+    {GradientShape::Cylinder, "GR_CYLIN", "CYLINDER"},
+    {GradientShape::InvCylinder, "GR_INVCYL", "INVCYLINDER"},
+    {GradientShape::Spherical, "GR_SPHER", "SPHERICAL"},
+    {GradientShape::InvSpherical, "GR_INVSPH", "INVSPHERICAL"},
+    {GradientShape::Hemispherical, "GR_HEMISP", "HEMISPHERICAL"},
+    {GradientShape::InvHemispherical, "GR_INVHEM", "INVHEMISPHERICAL"},
+    {GradientShape::Curved, "GR_CURVED", "CURVED"},
+    {GradientShape::InvCurved, "GR_INVCUR", "INVCURVED"},
+};
+bool same_upper(std::string_view a, std::string_view b) noexcept {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::toupper(static_cast<unsigned char>(x)) == std::toupper(static_cast<unsigned char>(y));
+           });
+}
+} // namespace
+
+std::optional<GradientShape> gradient_shape(std::string_view pattern) noexcept {
+    if (same_upper(pattern, "GRADIENT")) {
+        return GradientShape::Linear;
+    }
+    for (const GradientName& g : kGradientNames) {
+        if (same_upper(pattern, g.pattern)) {
+            return g.shape;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string_view gradient_pattern_name(GradientShape s) noexcept {
+    for (const GradientName& g : kGradientNames) {
+        if (g.shape == s) {
+            return g.pattern;
+        }
+    }
+    return "GR_LINEAR";
+}
+
+std::string_view gradient_dxf_name(GradientShape s) noexcept {
+    for (const GradientName& g : kGradientNames) {
+        if (g.shape == s) {
+            return g.dxf;
+        }
+    }
+    return "LINEAR";
+}
+
+GradientShape gradient_from_dxf(std::string_view name) noexcept {
+    for (const GradientName& g : kGradientNames) {
+        if (same_upper(name, g.dxf)) {
+            return g.shape;
+        }
+    }
+    return GradientShape::Linear;
+}
+
+double gradient_value(GradientShape s, double u, double v) noexcept {
+    const double sphere = std::min(1.0, std::hypot(u - 0.5, v - 0.5) / std::sqrt(0.5));
+    const double hemisphere = std::min(1.0, std::hypot(u - 0.5, v) / std::sqrt(1.25));
+    switch (s) {
+    case GradientShape::Linear:
+        return u;
+    case GradientShape::Cylinder:
+        return 1.0 - std::abs(2.0 * u - 1.0);
+    case GradientShape::InvCylinder:
+        return std::abs(2.0 * u - 1.0);
+    case GradientShape::Spherical:
+        return 1.0 - sphere;
+    case GradientShape::InvSpherical:
+        return sphere;
+    case GradientShape::Hemispherical:
+        return 1.0 - hemisphere;
+    case GradientShape::InvHemispherical:
+        return hemisphere;
+    case GradientShape::Curved:
+        return 1.0 - (1.0 - u) * (1.0 - u);
+    case GradientShape::InvCurved:
+        return (1.0 - u) * (1.0 - u);
+    }
+    return u;
 }
 
 } // namespace musacad::core::hatch

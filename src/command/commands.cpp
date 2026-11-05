@@ -18,6 +18,7 @@
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/dimension.hpp"
@@ -2853,9 +2854,10 @@ void HatchCommand::main_prompt(CommandContext& ctx) {
 }
 
 void HatchCommand::start(CommandContext& ctx) {
-    if (gradient_ && pattern_ != "GRADIENT") {
-        pattern_ = "GRADIENT"; // GRADIENT: HATCH with the gradient fill, its colours and angle as last set
-        ctx.echo("Pattern: GRADIENT");
+    if (gradient_ && !core::hatch::is_gradient(pattern_)) {
+        // GRADIENT: HATCH with the gradient fill, its shape, colours and angle as last set
+        pattern_ = gradient_shape_ == "GR_LINEAR" ? "GRADIENT" : gradient_shape_;
+        ctx.echo("Pattern: " + gradient_shape_);
     }
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point". A
@@ -3300,14 +3302,20 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         if (up == "G" || up == "GRADIENT") {
-            mode_ = Mode::GradientColor;
-            ctx.set_prompt("Specify second colour as r,g,b <" + std::to_string(color2_.r) + "," +
-                           std::to_string(color2_.g) + "," + std::to_string(color2_.b) + ">: ");
+            mode_ = Mode::GradientName;
+            ctx.set_prompt("Enter gradient pattern name or [?] <" + gradient_shape_ + ">: ");
             return;
         }
         if (up == "S" || up == "SOLID") {
             pattern_ = "SOLID";
             main_prompt(ctx);
+            return;
+        }
+        if (const std::optional<core::hatch::GradientShape> g = core::hatch::gradient_shape(up); g && !t.empty()) {
+            gradient_shape_ = std::string(core::hatch::gradient_pattern_name(*g)); // a gradient by its name
+            mode_ = Mode::GradientColor;
+            ctx.set_prompt("Specify second colour as r,g,b <" + std::to_string(color2_.r) + "," +
+                           std::to_string(color2_.g) + "," + std::to_string(color2_.b) + ">: ");
             return;
         }
         if (!t.empty()) {
@@ -3317,7 +3325,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             }
             pattern_ = up;
         }
-        if (pattern_ == "SOLID" || pattern_ == "GRADIENT") {
+        if (pattern_ == "SOLID" || core::hatch::is_gradient(pattern_)) {
             main_prompt(ctx);
             return;
         }
@@ -3411,9 +3419,38 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             }
             angle_ = core::to_radians(v);
         }
-        pattern_ = "GRADIENT";
-        ctx.echo("Pattern: GRADIENT");
+        pattern_ = gradient_shape_ == "GR_LINEAR" ? "GRADIENT" : gradient_shape_;
+        ctx.echo("Pattern: " + gradient_shape_);
         main_prompt(ctx);
+        return;
+    case Mode::GradientName:
+        // AutoCAD's nine gradients, by their gallery names (the GR_ may be left out). A colour
+        // typed here (r,g,b) is the second colour, the shape kept as it was.
+        if (t.find(',') != std::string::npos) {
+            mode_ = Mode::GradientColor;
+            input(ctx, text);
+            return;
+        }
+        if (t == "?") {
+            std::string list;
+            for (const core::hatch::GradientShape g : core::hatch::kGradientShapes) {
+                list += (list.empty() ? "" : ", ") + std::string(core::hatch::gradient_pattern_name(g));
+            }
+            ctx.echo(list);
+            return;
+        }
+        if (!t.empty()) {
+            const std::optional<core::hatch::GradientShape> g =
+                core::hatch::gradient_shape(up.starts_with("GR_") || up == "GRADIENT" ? up : "GR_" + up);
+            if (!g) {
+                ctx.echo("Unknown gradient \"" + t + "\"; ? lists them.");
+                return;
+            }
+            gradient_shape_ = std::string(core::hatch::gradient_pattern_name(*g));
+        }
+        mode_ = Mode::GradientColor;
+        ctx.set_prompt("Specify second colour as r,g,b <" + std::to_string(color2_.r) + "," + std::to_string(color2_.g) +
+                       "," + std::to_string(color2_.b) + ">: ");
         return;
     case Mode::PickPoint:
         break;
@@ -3447,9 +3484,8 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     if (up == "G" || up == "GRADIENT") {
-        mode_ = Mode::GradientColor;
-        ctx.set_prompt("Specify second colour as r,g,b <" + std::to_string(color2_.r) + "," + std::to_string(color2_.g) +
-                       "," + std::to_string(color2_.b) + ">: ");
+        mode_ = Mode::GradientName;
+        ctx.set_prompt("Enter gradient pattern name or [?] <" + gradient_shape_ + ">: ");
         return;
     }
     if (typed_ && (up == "O" || up == "ORIGIN")) {

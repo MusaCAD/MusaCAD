@@ -11,6 +11,7 @@
 
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_store.hpp"
+#include "musacad/core/hatch.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1657,7 +1658,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (h.pattern_name == "WIPEOUT") {
             return; // written as a WIPEOUT on its own
         }
-        const bool gradient = h.pattern_name == "GRADIENT";
+        const bool gradient = hatch::is_gradient(h.pattern_name);
         const auto own = model != kInBlock ? refs.hatch_handle.find(static_cast<std::uint32_t>(model))
                                            : refs.hatch_handle.end();
         const bool associative = own != refs.hatch_handle.end();
@@ -1722,7 +1723,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         // A standard pattern's line families are written as it is drawn, as AutoCAD writes
         // them: acadiso.pat's size for a hatch made with MEASUREMENT 1.
         const hatch::Pattern* standard =
-            custom == nullptr && !user && h.pattern_name != "SOLID" && h.pattern_name != "GRADIENT"
+            custom == nullptr && !user && h.pattern_name != "SOLID" && !hatch::is_gradient(h.pattern_name)
                 ? hatch::builtin_pattern(h.pattern_name)
                 : nullptr;
         if (const hatch::Pattern* def = custom != nullptr ? custom : standard) {
@@ -1784,7 +1785,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_d(s, 463, 1.0);
             code_i(s, 63, 2);
             code_i(s, 421, true_color(h.color2));
-            code(s, 470, "LINEAR");
+            code(s, 470, std::string(hatch::gradient_dxf_name(*hatch::gradient_shape(h.pattern_name))));
         }
     };
     for (const DocHatch& h : doc.hatches) {
@@ -3870,7 +3871,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                         }
                     }
                 }
-                h.pattern_name = "GRADIENT";
+                // 470 the shape (LINEAR, SPHERICAL ...): a linear one keeps the name it always had.
+                const std::string* name = find(body, 470);
+                const hatch::GradientShape shape = hatch::gradient_from_dxf(name != nullptr ? *name : std::string());
+                h.pattern_name = shape == hatch::GradientShape::Linear ? std::string("GRADIENT")
+                                                                        : std::string(hatch::gradient_pattern_name(shape));
                 h.pattern_angle = getd(body, 460, 0.0);
             }
             // A standard pattern at acadiso.pat's size: its line families, written as drawn,
@@ -3905,7 +3910,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             // A pattern Musa CAD does not have (an AutoCAD drawing's custom one): its line
             // families come with the hatch, scaled and turned as it draws them -- taken back
             // to the definition and kept with the drawing, so it draws here too.
-            if (h.pattern_name != "SOLID" && h.pattern_name != "GRADIENT" && h.pattern_name != "_USER" &&
+            if (h.pattern_name != "SOLID" && !hatch::is_gradient(h.pattern_name) && h.pattern_name != "_USER" &&
                 h.pattern_name != "_USERDOUBLE" && hatch::builtin_pattern(h.pattern_name) == nullptr &&
                 std::none_of(doc.patterns.begin(), doc.patterns.end(),
                              [&](const hatch::Pattern& p) { return p.name == h.pattern_name; })) {

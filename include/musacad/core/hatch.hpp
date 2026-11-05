@@ -3,12 +3,46 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
 
 namespace musacad::core::hatch {
+
+/// The gradient fills (#41): AutoCAD's nine, named as its gallery names them (GR_LINEAR,
+/// GR_CYLIN ...). GRADIENT, the name drawings from before have, is GR_LINEAR.
+enum class GradientShape : std::uint8_t {
+    Linear,
+    Cylinder,
+    InvCylinder,
+    Spherical,
+    InvSpherical,
+    Hemispherical,
+    InvHemispherical,
+    Curved,
+    InvCurved,
+};
+inline constexpr GradientShape kGradientShapes[] = {
+    GradientShape::Linear,       GradientShape::Cylinder,      GradientShape::InvCylinder,
+    GradientShape::Spherical,    GradientShape::InvSpherical,  GradientShape::Hemispherical,
+    GradientShape::InvHemispherical, GradientShape::Curved,    GradientShape::InvCurved,
+};
+/// The gradient a pattern name is, or nothing for any other pattern.
+[[nodiscard]] std::optional<GradientShape> gradient_shape(std::string_view pattern) noexcept;
+[[nodiscard]] inline bool is_gradient(std::string_view pattern) noexcept { return gradient_shape(pattern).has_value(); }
+/// A shape's pattern name (GR_LINEAR ...) and its name in DXF (470: LINEAR, CYLINDER ...).
+[[nodiscard]] std::string_view gradient_pattern_name(GradientShape s) noexcept;
+[[nodiscard]] std::string_view gradient_dxf_name(GradientShape s) noexcept;
+/// The shape read from a DXF name, LINEAR when it is not one.
+[[nodiscard]] GradientShape gradient_from_dxf(std::string_view name) noexcept;
+/// How far a point is from the first colour (0) to the second (1), where (u, v) is where it
+/// is in the fill's extents, 0 to 1 along the gradient's angle and across it. Centred, as
+/// AutoCAD draws them by default: a cylinder lightest down the middle, a sphere at the
+/// centre, a hemisphere from the middle of the lower edge.
+[[nodiscard]] double gradient_value(GradientShape s, double u, double v) noexcept;
 
 /// One candidate boundary edge (a straight segment; arcs/circles are pre-tessellated).
 struct Segment {

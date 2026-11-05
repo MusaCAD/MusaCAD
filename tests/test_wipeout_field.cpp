@@ -140,11 +140,12 @@ TEST_CASE("#33 GRADIENT: banded fills from the entity colour to the second colou
     RenderSnapshot snap;
     build_render_snapshot(store, kernel, snap, 0.01, 1.0);
     REQUIRE(snap.fill_batches.size() >= 8);
-    // The bands cover the square; each overlaps the next by 3% of its width (the seam
-    // guard), so the triangle sum runs a little over the region's 100.
+    // The bands cover the square; each of the 48 overlaps the next by half its width (the
+    // seam guard: wide enough to cover an antialiased edge at plot scale), so the triangle
+    // sum runs over the region's 100.
     const double area = triangle_area_sum(snap.fill_vertices);
     CHECK(area >= 100.0 - 1e-6);
-    CHECK(area <= 100.0 + 23.0 * (10.0 / 24.0 * 0.03) * 10.0 + 1e-6);
+    CHECK(area <= 100.0 + 47.0 * (10.0 / 48.0 * 0.5) * 10.0 + 1e-6);
     // Bands run along +X (angle 0): the darker a batch (toward the second colour,
     // black), the further right it lies, each band no wider than a 24th of the square.
     // Batches are keyed by colour, so order them by brightness first.

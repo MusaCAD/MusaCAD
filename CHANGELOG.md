@@ -20,6 +20,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   dimensions stay associative in AutoCAD and when the file is opened again. Opening an AutoCAD
   drawing, the dimensions it has associated follow their objects and the others do not, as
   there.
+- **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
+  Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
+  curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).
+  HATCH's Gradient asks `Enter gradient pattern name or [?] <GR_LINEAR>:` first, and a
+  gradient's name works at the pattern prompt too. They plot as they show, and go to and come
+  from DXF as AutoCAD's gradients. Gradients are drawn in twice as many steps as before, with
+  no hairlines between them in a PDF.
 - **Hatch association in DXF** (#41): an associative hatch is written as one, each of its
   boundaries naming the objects it lies on, as AutoCAD writes them. Before, every hatch went
   out as not associative and came back that way.

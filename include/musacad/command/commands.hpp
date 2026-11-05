@@ -551,7 +551,7 @@ public:
     void selection_gesture(CommandContext& ctx) override;
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientName, GradientColor, GradientAngle, Select, UserAngle, UserSpacing, UserDouble,
                       Origin, OriginPoint, OriginCorner, HatchColor, HatchLayer, Advanced, AdvBoundarySet,
                       AdvBoundarySelect, AdvRetain, AdvIsland, AdvRayCast, AdvRayAngle, AdvStyle, AdvAssoc, AdvGap,
                       AdvSeparate, DrawRetain, DrawStart, DrawNext, DrawLength, DrawNewBoundary, RemoveBoundaries };
@@ -579,6 +579,7 @@ private:
     static inline double scale_ = 1.0;             // HPSCALE
     static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
     static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+    static inline std::string gradient_shape_ = "GR_LINEAR"; // the gradient's shape (#41)
     static inline std::optional<core::Vec2> origin_;    // HPORIGIN when set
     static inline std::uint8_t origin_corner_ = 0;      // Default to boundary extents
     static inline std::string layer_;                   // HPLAYER ("": the current layer)

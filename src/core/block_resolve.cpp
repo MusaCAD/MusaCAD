@@ -194,7 +194,7 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
         if (bh.pattern_name == "WIPEOUT") {
             continue; // a mask has nothing of its own to draw
         }
-        if (bh.pattern_name == "SOLID" || bh.pattern_name == "GRADIENT") {
+        if (bh.pattern_name == "SOLID" || hatch::is_gradient(bh.pattern_name)) {
             if (fills == nullptr || !store.fillmode()) {
                 continue;
             }

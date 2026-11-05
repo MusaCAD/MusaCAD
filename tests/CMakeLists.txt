@@ -210,6 +210,7 @@ set(_musacad_test_files
     test_block_hatches.cpp
     test_dxf_dimassoc.cpp
     test_dxf_r2000.cpp
+    test_hatch_gradients.cpp
     test_external_files.cpp
     test_update_channel.cpp
     test_fonts.cpp

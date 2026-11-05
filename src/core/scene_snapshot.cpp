@@ -957,7 +957,152 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     }
                 }
             }
-        } else if (pname == "GRADIENT") {
+        } else if (const std::optional<hatch::GradientShape> shape = hatch::gradient_shape(pname);
+                   shape && *shape != hatch::GradientShape::Linear) {
+            // The other gradient shapes (#41): the filled region cut into small triangles on a
+            // grid in the gradient's own frame (along its angle and across it), the gradient's
+            // value worked out at their corners, and each triangle split along the value's
+            // contours (interpolated across it) into bands of one colour each -- so the bands
+            // follow the shape's curves rather than the grid.
+            htris.clear();
+            hatch::triangulate_filled(store.hatch_loops(*hd), htris);
+            if (!htris.empty()) {
+                const Vec2 along{std::cos(hd->pattern_angle), std::sin(hd->pattern_angle)};
+                const Vec2 across{-along.y, along.x};
+                double u0 = std::numeric_limits<double>::infinity();
+                double u1 = -u0;
+                double v0 = u0;
+                double v1 = -u0;
+                for (const Vec2& p : htris) {
+                    u0 = std::min(u0, dot(p, along));
+                    u1 = std::max(u1, dot(p, along));
+                    v0 = std::min(v0, dot(p, across));
+                    v1 = std::max(v1, dot(p, across));
+                }
+                constexpr int kCells = 24;
+                constexpr int kLevels = 48;
+                const double du = std::max(u1 - u0, 1e-9) / kCells;
+                const double dv = std::max(v1 - v0, 1e-9) / kCells;
+                const auto value = [&](Vec2 p) {
+                    return hatch::gradient_value(*shape, (dot(p, along) - u0) / (u1 - u0 > 1e-9 ? u1 - u0 : 1.0),
+                                                 (dot(p, across) - v0) / (v1 - v0 > 1e-9 ? v1 - v0 : 1.0));
+                };
+                // The part of a polygon where `f` (a value per corner, interpolated along the
+                // sides) is >= t, or <= t.
+                struct Corner {
+                    Vec2 p;
+                    double f;
+                };
+                const auto clip = [](const std::vector<Corner>& in, double t, bool keep_ge, std::vector<Corner>& outp) {
+                    outp.clear();
+                    const std::size_t n = in.size();
+                    for (std::size_t i = 0; i < n; ++i) {
+                        const Corner& a = in[i];
+                        const Corner& b = in[(i + 1) % n];
+                        const double da = a.f - t;
+                        const double db = b.f - t;
+                        const bool ina = keep_ge ? da >= 0.0 : da <= 0.0;
+                        const bool inb = keep_ge ? db >= 0.0 : db <= 0.0;
+                        if (ina) {
+                            outp.push_back(a);
+                        }
+                        if (ina != inb) {
+                            const double k = da / (da - db);
+                            outp.push_back({a.p + (b.p - a.p) * k, a.f + (b.f - a.f) * k});
+                        }
+                    }
+                };
+                std::vector<std::vector<Vec2>> levels(kLevels);
+                std::vector<Corner> poly;
+                std::vector<Corner> tmp;
+                std::vector<Corner> strip;
+                std::vector<Corner> cell;
+                std::vector<Corner> piece;
+                // Neighbouring bands overlap by a sliver, so their seams do not show as
+                // hairlines when the fills are antialiased (screen and PDF alike).
+                const double overlap = 0.5 / kLevels;
+                const auto with_values = [&](std::vector<Corner>& c) {
+                    for (Corner& k : c) {
+                        k.f = value(k.p);
+                    }
+                };
+                for (std::size_t t = 0; t + 2 < htris.size(); t += 3) {
+                    // Clip by the grid lines first (the scalar is the position along / across).
+                    poly = {{htris[t], 0.0}, {htris[t + 1], 0.0}, {htris[t + 2], 0.0}};
+                    double tu0 = u1;
+                    double tu1 = u0;
+                    double tv0 = v1;
+                    double tv1 = v0;
+                    for (const Corner& k : poly) {
+                        tu0 = std::min(tu0, dot(k.p, along));
+                        tu1 = std::max(tu1, dot(k.p, along));
+                        tv0 = std::min(tv0, dot(k.p, across));
+                        tv1 = std::max(tv1, dot(k.p, across));
+                    }
+                    const int i0 = std::clamp(static_cast<int>((tu0 - u0) / du), 0, kCells - 1);
+                    const int i1 = std::clamp(static_cast<int>((tu1 - u0) / du), 0, kCells - 1);
+                    const int j0 = std::clamp(static_cast<int>((tv0 - v0) / dv), 0, kCells - 1);
+                    const int j1 = std::clamp(static_cast<int>((tv1 - v0) / dv), 0, kCells - 1);
+                    for (Corner& k : poly) {
+                        k.f = dot(k.p, along);
+                    }
+                    for (int i = i0; i <= i1; ++i) {
+                        // Cells overlap their neighbours (by half a cell): the colour comes from
+                        // where a point is, so the overlap matches, and no seam can open.
+                        clip(poly, u0 + du * i, true, tmp);
+                        clip(tmp, u0 + du * (i + 1.5), false, strip);
+                        if (strip.size() < 3) {
+                            continue;
+                        }
+                        for (Corner& k : strip) {
+                            k.f = dot(k.p, across);
+                        }
+                        for (int j = j0; j <= j1; ++j) {
+                            clip(strip, v0 + dv * j, true, tmp);
+                            clip(tmp, v0 + dv * (j + 1.5), false, cell);
+                            if (cell.size() < 3) {
+                                continue;
+                            }
+                            // Then each small triangle of the cell into bands of the gradient.
+                            with_values(cell);
+                            for (std::size_t c = 1; c + 1 < cell.size(); ++c) {
+                                const std::vector<Corner> tri{cell[0], cell[c], cell[c + 1]};
+                                const double lo = std::min({tri[0].f, tri[1].f, tri[2].f});
+                                const double hi = std::max({tri[0].f, tri[1].f, tri[2].f});
+                                const int k0 = std::clamp(static_cast<int>(lo * kLevels), 0, kLevels - 1);
+                                const int k1 = std::clamp(static_cast<int>(hi * kLevels), 0, kLevels - 1);
+                                for (int k = k0; k <= k1; ++k) {
+                                    if (k == k0 && k == k1) {
+                                        piece = tri;
+                                    } else {
+                                        clip(tri, k == k0 ? -1.0 : static_cast<double>(k) / kLevels, true, tmp);
+                                        clip(tmp, k == k1 ? 2.0 : static_cast<double>(k + 1) / kLevels + overlap, false, piece);
+                                    }
+                                    std::vector<Vec2>& out_tris = levels[static_cast<std::size_t>(k)];
+                                    for (std::size_t b = 1; b + 1 < piece.size(); ++b) {
+                                        out_tris.push_back(piece[0].p);
+                                        out_tris.push_back(piece[b].p);
+                                        out_tris.push_back(piece[b + 1].p);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for (int k = 0; k < kLevels; ++k) {
+                    if (levels[static_cast<std::size_t>(k)].empty()) {
+                        continue;
+                    }
+                    const double mix = (static_cast<double>(k) + 0.5) / kLevels;
+                    const auto lerp8 = [mix](std::uint8_t a, std::uint8_t b) {
+                        return static_cast<std::uint8_t>(std::lround(a + (static_cast<double>(b) - a) * mix));
+                    };
+                    add_gradient_fills(Rgb{lerp8(r.color.r, hd->color2.r), lerp8(r.color.g, hd->color2.g),
+                                           lerp8(r.color.b, hd->color2.b)},
+                                       levels[static_cast<std::size_t>(k)]);
+                }
+            }
+        } else if (hatch::is_gradient(pname)) {
             // A two-colour linear gradient along pattern_angle, drawn as bands: each
             // triangle of the filled region is clipped to the band strips and coloured by
             // the band's mix -- no renderer change, and it plots as flat vector fills.
@@ -972,7 +1117,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                     lo = std::min(lo, t);
                     hi = std::max(hi, t);
                 }
-                constexpr int kBands = 24;
+                constexpr int kBands = 48;
                 const double span = std::max(hi - lo, 1e-9);
                 std::vector<Vec2> band_tris;
                 std::vector<Vec2> poly;
@@ -999,7 +1144,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
                 };
                 // Neighbouring bands overlap by a sliver so the seams between them do not
                 // show as hairlines when the fills are antialiased (screen and PDF alike).
-                const double overlap = span / kBands * 0.03;
+                const double overlap = span / kBands * 0.5;
                 for (int k = 0; k < kBands; ++k) {
                     const double t0 = lo + span * static_cast<double>(k) / kBands;
                     const double t1 = lo + span * static_cast<double>(k + 1) / kBands + overlap;
