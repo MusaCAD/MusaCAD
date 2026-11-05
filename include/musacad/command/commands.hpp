@@ -3853,6 +3853,29 @@ private:
     static inline double s_height_ = 2.5;
 };
 
+/// RTEXT (Express Tools, #77): `Enter an option [Style/Height/Rotation/File/Diesel] <File>:`
+/// -- File: `Enter file name:`; Diesel: `Enter a DIESEL expression:` -- then `Specify start
+/// point of RText:`. A multiline text whose text is the file's (read again when the file
+/// changes) or the expression's value, as a field (`\AcDiesel` is AutoCAD's own).
+class RTextCommand final : public ICommand {
+public:
+    std::string name() const override { return "RTEXT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::File || step_ == Step::Diesel; }
+
+private:
+    enum class Step : std::uint8_t { Option, Style, Height, Rotation, File, Diesel, Point };
+    void option_prompt(CommandContext& ctx);
+    Step step_ = Step::Option;
+    std::string field_;
+    bool done_ = false;
+    static inline double s_height_ = 2.5;
+    static inline double s_rotation_ = 0.0;
+};
+
 /// SUPERHATCH (Express Tools, #77): `Enter a pattern type [Block/Wipeout/Select existing]
 /// <Block>:`; Block: `Enter block name or [?]:`, `Specify block scale <1>:`, `Specify rotation
 /// angle <0>:`; Select existing: `Select a block reference or an image:`; then `Specify an

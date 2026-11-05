@@ -32,6 +32,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   their blocks in a row, a column or rows of a number you give, the first's leader to them.
 - **ALIGNSPACE** (#77): two points of the model, picked through a layout viewport, and two
   points of the sheet -- the viewport panned and scaled so they fall on them.
+- **RTEXT** (#77): text that shows a file's contents -- read again when the file changes --
+  or the value of a DIESEL expression (`$(getvar,dwgname)`, `$(edtime,...)`, `$(+,...)` ...),
+  as a multiline text with a field. `%<\AcDiesel ...>%`, AutoCAD's DIESEL field, now works in
+  any text.
 - **SUPERHATCH** (#77): an area filled with copies of a block side by side -- the copies the
   boundary cuts cut there, as lines -- or of an image or block reference already in the
   drawing (an image's copies clipped to the boundary), or with a wipeout; one group.

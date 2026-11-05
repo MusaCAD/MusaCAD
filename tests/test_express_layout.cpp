@@ -299,3 +299,18 @@ TEST_CASE("#77 RTEXT's fields: a DIESEL expression's value, and a file's text re
     REQUIRE(text::expand_fields(field).find("file not found") != std::string::npos);
     text::set_field_context(text::FieldContext{});
 }
+
+TEST_CASE("#77 RTEXT asks for a file or a DIESEL expression, then where") {
+    H h;
+    h.run({"RTEXT"});
+    REQUIRE(h.out.prompt == "Enter an option [Style/Height/Rotation/File/Diesel] <File>: ");
+    h.run({"H", "5", "D", "$(getvar,dwgname)", "10,20"});
+    const auto* m = h.last<AddMTextCommand>();
+    REQUIRE(m != nullptr);
+    REQUIRE(m->content == "%<\\AcDiesel $(getvar,dwgname)>%");
+    REQUIRE(m->block.height == Approx(5.0));
+    REQUIRE(m->block.pos == Vec2{10, 20});
+    h.run({"RTEXT", "", "/no/such/file.txt"});
+    REQUIRE(h.out.lines.back() == "Cannot find \"/no/such/file.txt\".");
+    h.proc.cancel();
+}

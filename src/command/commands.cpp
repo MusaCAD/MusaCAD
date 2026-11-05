@@ -20530,6 +20530,97 @@ void AlignSpaceUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void RTextCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    option_prompt(ctx);
+}
+
+void RTextCommand::option_prompt(CommandContext& ctx) {
+    step_ = Step::Option;
+    ctx.set_prompt("Enter an option [Style/Height/Rotation/File/Diesel] <File>: ");
+}
+
+void RTextCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Option:
+        if (u == "S" || u == "STYLE") {
+            step_ = Step::Style;
+            ctx.set_prompt("Enter text style name <current>: ");
+        } else if (u == "H" || u == "HEIGHT") {
+            step_ = Step::Height;
+            ctx.set_prompt("Specify height <" + fmt4(s_height_) + ">: ");
+        } else if (u == "R" || u == "ROTATION") {
+            step_ = Step::Rotation;
+            ctx.set_prompt("Specify rotation of text <" + fmt4(core::to_degrees(s_rotation_)) + ">: ");
+        } else if (u == "D" || u == "DIESEL") {
+            step_ = Step::Diesel;
+            ctx.set_prompt("Enter a DIESEL expression: ");
+        } else if (t.empty() || u == "F" || u == "FILE") {
+            step_ = Step::File;
+            ctx.set_prompt("Enter file name: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    case Step::Style:
+        ctx.echo("RText takes the current text style.");
+        option_prompt(ctx);
+        return;
+    case Step::Height:
+    case Step::Rotation: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || (step_ == Step::Height && *v <= 0.0)) {
+                ctx.echo(step_ == Step::Height ? "Requires a positive number." : "Requires an angle in degrees.");
+                return;
+            }
+            (step_ == Step::Height ? s_height_ : s_rotation_) = step_ == Step::Height ? *v : core::to_radians(*v);
+        }
+        option_prompt(ctx);
+        return;
+    }
+    case Step::File:
+    case Step::Diesel:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (step_ == Step::File) {
+            std::string path = t;
+            if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
+                path = path.substr(1, path.size() - 2);
+            }
+            if (!std::filesystem::exists(path)) {
+                ctx.echo("Cannot find \"" + path + "\".");
+                return;
+            }
+            field_ = "%<\\RText \"" + path + "\">%";
+        } else {
+            field_ = "%<\\AcDiesel " + t + ">%";
+        }
+        step_ = Step::Point;
+        ctx.set_prompt("Specify start point of RText: ");
+        return;
+    case Step::Point:
+        if (const auto p = read_point(ctx, text)) {
+            core::MTextBlock b;
+            b.pos = *p;
+            b.height = s_height_;
+            b.rotation = s_rotation_;
+            ctx.submit(core::AddMTextCommand{b, field_, ctx.group_id()});
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void RTextCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void SuperHatchUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     ctx.set_prompt("Enter a pattern type [Block/Wipeout/Select existing] <Block>: ");

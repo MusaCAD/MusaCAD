@@ -857,6 +857,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/leader.svg", "Add Leader: another leader for a multileader, to its landing.");
     reg({"AIMLEADEREDITREMOVE"}, [] { return std::make_unique<MLeaderEditUiCommand>(true, "AIMLEADEREDITREMOVE"); },
         "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
+    reg({"RTEXT"}, [] { return std::make_unique<RTextCommand>(); }, "assets/ribbon/text.svg",
+        "Place text that shows a file's contents (read again when the file changes) or a DIESEL expression.");
     reg({"SUPERHATCH"}, [] { return std::make_unique<SuperHatchUiCommand>(); }, "assets/ribbon/hatch.svg",
         "Fill an area with copies of a block or an image side by side, or with a wipeout.");
     reg({"ARCTEXT"}, [] { return std::make_unique<ArcTextUiCommand>(); }, "assets/ribbon/text.svg",
