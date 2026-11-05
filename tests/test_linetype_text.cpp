@@ -161,3 +161,66 @@ TEST_CASE("GAS_LINE and HOT_WATER_SUPPLY are in the linetype library, at acadiso
     lib_gas.description = gas_line().description;
     REQUIRE(lib_gas == gas_line());
 }
+
+TEST_CASE("A linetype's text is kept in the drawing and in DXF") {
+    io::Document doc;
+    doc.linetypes.push_back(gas_line());
+    LinetypeDef odd;
+    odd.name = "ODD";
+    odd.pattern = {1.0, -1.0};
+    LinetypeText t;
+    t.after = 0; // where the pattern starts
+    t.text = "two words";
+    t.style = "Notes";
+    t.scale = 0.25;
+    t.rotation = 0.5;
+    t.absolute = true;
+    t.x = 0.1;
+    t.y = -0.2;
+    odd.texts.push_back(t);
+    doc.linetypes.push_back(odd);
+    TextStyle notes;
+    notes.name = "Notes";
+    doc.text_styles.push_back(TextStyle{});
+    doc.text_styles.front().name = "Standard";
+    doc.text_styles.push_back(notes);
+
+    io::Document nat;
+    REQUIRE(io::parse_native(io::serialize_native(doc), nat).ok);
+    REQUIRE(nat.linetypes == doc.linetypes);
+
+    const std::string dxf = io::serialize_dxf(doc);
+    io::Document back;
+    REQUIRE(io::parse_dxf(dxf, back).ok);
+    const auto find = [&](const char* name) {
+        return std::find_if(back.linetypes.begin(), back.linetypes.end(), [&](const LinetypeDef& d) { return d.name == name; });
+    };
+    const auto gas = find("GAS_LINE");
+    REQUIRE(gas != back.linetypes.end());
+    REQUIRE(gas->pattern == gas_line().pattern);
+    REQUIRE(gas->texts.size() == 1);
+    REQUIRE(gas->texts[0].after == 2);
+    REQUIRE(gas->texts[0].text == "GAS");
+    REQUIRE(gas->texts[0].style == "Standard"); // STANDARD is the drawing's Standard
+    REQUIRE(gas->texts[0].scale == Approx(0.1));
+    REQUIRE(gas->texts[0].x == Approx(-0.1));
+    REQUIRE(gas->texts[0].y == Approx(-0.05));
+    const auto o = find("ODD");
+    REQUIRE(o != back.linetypes.end());
+    REQUIRE(o->texts.size() == 1);
+    // The one at the pattern's start goes with its last element: the same place.
+    REQUIRE(o->texts[0].after == 2);
+    REQUIRE(o->texts[0].text == "two words");
+    REQUIRE(o->texts[0].style == "Notes");
+    REQUIRE(o->texts[0].absolute);
+    REQUIRE(o->texts[0].rotation == Approx(0.5));
+    REQUIRE(o->texts[0].scale == Approx(0.25));
+
+    // The style it names is a STYLE record's handle.
+    const std::size_t at = dxf.find("\n9\ntwo words");
+    REQUIRE(at != std::string::npos);
+    const std::size_t h = dxf.rfind("340\n", at);
+    REQUIRE(h != std::string::npos);
+    const std::string handle = dxf.substr(h + 4, dxf.find('\n', h + 4) - h - 4);
+    REQUIRE(dxf.find("STYLE\n5\n" + handle + "\n") != std::string::npos);
+}

@@ -429,6 +429,27 @@ std::string serialize_native(const Document& doc) {
             append_double(s, e);
         }
         s += '\n';
+        // v48: LTTEXT after scale rotation flags x y style text -- the text the linetype just
+        // defined draws (flags: 1 absolute, 2 upright).
+        for (const LinetypeText& t : d.texts) {
+            s += "LTTEXT ";
+            append_uint(s, t.after);
+            for (const double v : {t.scale, t.rotation}) {
+                s += ' ';
+                append_double(s, v);
+            }
+            s += ' ';
+            append_uint(s, (t.absolute ? 1U : 0U) | (t.upright ? 2U : 0U));
+            for (const double v : {t.x, t.y}) {
+                s += ' ';
+                append_double(s, v);
+            }
+            s += ' ';
+            s += word(t.style);
+            s += ' ';
+            s += word(t.text);
+            s += '\n';
+        }
     }
     // v41: LTBUILTIN i n e1..en -- the drawing's own Dashed (0), Center (1) and Hidden (2).
     for (std::size_t i = 0; i < doc.builtin_linetypes.size(); ++i) {
@@ -3137,6 +3158,28 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return spelled == "-" ? std::string{} : spelled;
             };
             doc.linetypes.push_back(LinetypeDef{word(tok[1]), word(tok[2]), vals});
+        } else if (key == "LTTEXT") {
+            LinetypeText t;
+            std::uint64_t after = 0;
+            std::uint64_t flags = 0;
+            if (doc.linetypes.empty() || tok.size() != 9 || !to_uint(tok[1], after) || !to_double(tok[2], t.scale) ||
+                !to_double(tok[3], t.rotation) || !to_uint(tok[4], flags) || !to_double(tok[5], t.x) ||
+                !to_double(tok[6], t.y)) {
+                return fail("malformed LTTEXT");
+            }
+            const auto word = [](std::string_view w) {
+                std::string spelled(w);
+                for (char& sp : spelled) {
+                    sp = sp == '\x1f' ? ' ' : sp;
+                }
+                return spelled == "-" ? std::string{} : spelled;
+            };
+            t.after = static_cast<std::uint32_t>(after);
+            t.absolute = (flags & 1U) != 0;
+            t.upright = (flags & 2U) != 0;
+            t.style = word(tok[7]);
+            t.text = word(tok[8]);
+            doc.linetypes.back().texts.push_back(std::move(t));
         } else if (key == "LAYERFILTER") {
             if (tok.size() < 2) {
                 return fail("malformed LAYERFILTER");

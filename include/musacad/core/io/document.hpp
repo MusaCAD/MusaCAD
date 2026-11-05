@@ -73,7 +73,7 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 47;
+inline constexpr std::uint32_t kFormatVersion = 48;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -464,7 +464,8 @@ struct Document {
     bool wipeout_frames_plot = true; ///< WIPEOUTFRAME 2 (v40): the frames shown but not plotted
     std::vector<LayerState> layer_states; ///< LAYERSTATE (v40)
     std::vector<LayerGroupFilter> layer_filters{}; ///< v40: the layer group filters
-    std::vector<LinetypeDef> linetypes{}; ///< v40: the linetypes loaded beyond the built-in four
+    /// v40: the linetypes loaded beyond the built-in four; v48 (#68): the text in them.
+    std::vector<LinetypeDef> linetypes{};
     /// v41: the drawing's own Dashed, Center and Hidden (a file from before has Musa CAD's
     /// former definitions).
     BuiltinLinetypes builtin_linetypes = legacy_builtin_linetypes();

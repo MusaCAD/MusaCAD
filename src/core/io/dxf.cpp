@@ -563,9 +563,14 @@ std::uint64_t emit_table_head(std::string& s, const char* name, long count) {
     return h;
 }
 thread_local std::uint64_t g_table = 0; // the table whose records are being written
-std::uint64_t emit_record_head(std::string& s, const char* type, const char* subclass) {
+std::uint64_t emit_record_head(std::string& s, const char* type, const char* subclass, std::uint64_t given = 0) {
     code(s, 0, type);
-    const std::uint64_t h = emit_handle(s);
+    std::uint64_t h = given;
+    if (given != 0) {
+        code(s, 5, handle_hex(given)); // a handle given out earlier, for a reference before it
+    } else {
+        h = emit_handle(s);
+    }
     code(s, 330, handle_hex(g_table));
     code(s, 100, "AcDbSymbolTableRecord");
     code(s, 100, subclass);
@@ -592,6 +597,20 @@ void emit_ltype(std::string& s, const char* name, std::span<const double> elems)
 void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint64_t>& layer_handles) {
     code(s, 0, "SECTION");
     code(s, 2, "TABLES");
+    // The text styles' handles, given out now: a linetype's text names its style (340), and
+    // the STYLE table comes after LTYPE.
+    std::vector<std::uint64_t> style_handles;
+    for (std::size_t i = 0; i < std::max<std::size_t>(doc.text_styles.size(), 1); ++i) {
+        style_handles.push_back(g_handle++);
+    }
+    const auto style_handle = [&](const std::string& name) {
+        for (std::size_t i = 0; i < doc.text_styles.size(); ++i) {
+            if (same_table_name(doc.text_styles[i].name, name)) {
+                return style_handles[i];
+            }
+        }
+        return style_handles.front(); // Standard
+    };
     // LTYPE table first -- layers/entities reference these patterns by name. The
     // element lengths mirror core/linetype.cpp (Dashed/Hidden/Center).
     g_table = emit_table_head(s, "LTYPE", 4);
@@ -628,9 +647,25 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
             total += std::abs(e);
         }
         code_d(s, 40, total);
-        for (const double e : d.pattern) {
-            code_d(s, 49, e);
-            code_i(s, 74, 0); // a plain dash, gap or dot
+        for (std::size_t e = 0; e < d.pattern.size(); ++e) {
+            code_d(s, 49, d.pattern[e]);
+            // The text drawn where this element ends (the last one's also where the pattern
+            // starts again), as AutoCAD writes a complex linetype's: one per element.
+            const auto text = std::find_if(d.texts.begin(), d.texts.end(), [&](const LinetypeText& t) {
+                return t.after == e + 1 || (t.after == 0 && e + 1 == d.pattern.size());
+            });
+            if (text == d.texts.end()) {
+                code_i(s, 74, 0); // a plain dash, gap or dot
+                continue;
+            }
+            code_i(s, 74, 2 | (text->absolute ? 1 : 0)); // text; its rotation absolute or not
+            code_i(s, 75, 0);
+            code(s, 340, handle_hex(style_handle(text->style)));
+            code_d(s, 46, text->scale);
+            code_d(s, 50, text->rotation); // radians, in LTYPE
+            code_d(s, 44, text->x);
+            code_d(s, 45, text->y);
+            code(s, 9, text->text);
         }
     }
     code(s, 0, "ENDTAB");
@@ -687,7 +722,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     // file (txt for the stroke font), fixed height, width factor, obliquing angle.
     g_table = emit_table_head(s, "STYLE", static_cast<long>(std::max<std::size_t>(doc.text_styles.size(), 1)));
     if (doc.text_styles.empty()) {
-        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord");
+        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord", style_handles.front());
         code(s, 2, "Standard");
         code_i(s, 70, 0);
         code_d(s, 40, 0.0);
@@ -695,8 +730,9 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 50, 0.0);
         code(s, 3, "txt");
     }
-    for (const TextStyle& ts : doc.text_styles) {
-        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord");
+    for (std::size_t i = 0; i < doc.text_styles.size(); ++i) {
+        const TextStyle& ts = doc.text_styles[i];
+        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord", style_handles[i]);
         code(s, 2, ts.name);
         code_i(s, 70, 0);
         code_d(s, 40, ts.height);
@@ -2693,6 +2729,29 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
     }
     doc.builtin_linetypes = standard_builtin_linetypes(doc.display_units.measurement == 1);
+    // The text styles by handle: a complex linetype's text names its style so (340).
+    std::map<std::string, std::string> style_by_handle;
+    for (std::size_t k = 0; k + 1 < pairs.size(); ++k) {
+        if (pairs[k].code != 0 || pairs[k].value != "STYLE") {
+            continue;
+        }
+        std::string handle;
+        std::string name;
+        for (std::size_t j = k + 1; j < pairs.size() && pairs[j].code != 0; ++j) {
+            if (pairs[j].code == 5) {
+                handle = pairs[j].value;
+            } else if (pairs[j].code == 2) {
+                name = pairs[j].value;
+            }
+        }
+        if (!handle.empty() && !name.empty()) {
+            style_by_handle[handle] = name;
+        }
+    }
+    const auto style_name_of = [&](const std::string& handle) {
+        const auto it = style_by_handle.find(handle);
+        return it == style_by_handle.end() ? std::string("STANDARD") : it->second;
+    };
     // The drawing's linetypes (its LTYPE table): those beyond the built-in four, and one by a
     // built-in name that the drawing draws otherwise, come with it; entities and layers then
     // take theirs by name.
@@ -2702,15 +2761,44 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
         LinetypeDef d;
         std::size_t j = k + 1;
+        bool has_text = false; // the element just read carries text: the codes after it are its
         for (; j < pairs.size() && pairs[j].code != 0; ++j) {
-            if (pairs[j].code == 2) {
+            const int c = pairs[j].code;
+            if (c == 2) {
                 d.name = pairs[j].value;
-            } else if (pairs[j].code == 3) {
+            } else if (c == 3) {
                 d.description = pairs[j].value;
-            } else if (pairs[j].code == 49) {
+            } else if (c == 49) {
                 d.pattern.push_back(to_d(pairs[j].value));
+                has_text = false;
+            } else if (c == 74) {
+                const long flags = std::lround(to_d(pairs[j].value));
+                has_text = (flags & 2) != 0; // a shape (4) is left out
+                if (has_text) {
+                    LinetypeText t;
+                    t.after = static_cast<std::uint32_t>(d.pattern.size());
+                    t.absolute = (flags & 1) != 0;
+                    t.scale = 1.0;
+                    d.texts.push_back(std::move(t));
+                }
+            } else if (has_text && c == 340) {
+                d.texts.back().style = style_name_of(pairs[j].value);
+            } else if (has_text && c == 46) {
+                d.texts.back().scale = to_d(pairs[j].value);
+            } else if (has_text && c == 50) {
+                // Radians, as the reference has it; a value no turn in radians could be is
+                // taken as degrees.
+                const double r = to_d(pairs[j].value);
+                d.texts.back().rotation = std::abs(r) > kTwoPi + 1e-6 ? r * kPi / 180.0 : r;
+            } else if (has_text && c == 44) {
+                d.texts.back().x = to_d(pairs[j].value);
+            } else if (has_text && c == 45) {
+                d.texts.back().y = to_d(pairs[j].value);
+            } else if (has_text && c == 9) {
+                d.texts.back().text = pairs[j].value;
             }
         }
+        std::erase_if(d.texts, [](const LinetypeText& t) { return t.text.empty(); });
         k = j - 1;
         std::string u = d.name;
         for (char& ch : u) {

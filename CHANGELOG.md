@@ -46,6 +46,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   filtered by name; a value typed in is set as the variable's own command sets it.
 - **LAYOUTMERGE** (#77): layouts made one -- each layout's objects onto the destination's
   sheet, where they were, and the layout deleted.
+- **Text in complex linetypes** (#68) -- a linetype's text elements, as acad.lin writes them
+  (`["GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05]`), are drawn along the line, scaled with the
+  pattern and turned to read upright where the U option asks for it. Loaded from a .lin file
+  or with an AutoCAD drawing, kept in the drawing (format v48) and in DXF. GAS_LINE and
+  HOT_WATER_SUPPLY join the linetypes Musa CAD offers without a .lin file. Shapes in a
+  linetype (from .shx files) are still left out.
 - **Style galleries** (#78) -- the Dimension Style, Multileader Style and Table Style lists on
   Annotate show each style as a picture: a dimension with its arrows and text, a leader with
   its landing and content, a table's title, header and cells.
