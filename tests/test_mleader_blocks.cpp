@@ -113,3 +113,55 @@ TEST_CASE("#61 a balloon: the tag block added to the drawing, against the landin
     REQUIRE((doc.inserts[0].attribs.at(0).value == "7" || doc.inserts[1].attribs.at(0).value == "7"));
     engine.stop();
 }
+
+TEST_CASE("#61 DXF: a balloon goes out as its leader and a reference; AutoCAD's block content comes in") {
+    io::Document doc;
+    io::DocBlockDef tag;
+    tag.name = "_TagCircle";
+    tag.circles.push_back({{0, 0}, 1.25});
+    io::DocAttDef a;
+    a.text.content = "TAGNUMBER";
+    a.def = "TAGNUMBER";
+    tag.attdefs.push_back(a);
+    doc.block_defs.push_back(tag);
+    io::DocMLeader m;
+    m.vertices = {{0, 0}, {15, 10}, {20, 10}};
+    m.content_block = "_TagCircle";
+    m.content = std::string("4\x1E") + "5";
+    m.block.pos = {22.5, 10};
+    m.block.height = 2.0;
+    doc.mleaders.push_back(m);
+    const std::string dxf = io::serialize_dxf(doc);
+    io::Document back;
+    REQUIRE(io::parse_dxf(dxf, back).ok);
+    REQUIRE(back.inserts.size() == 2); // one reference a balloon
+    REQUIRE(back.inserts[0].block_name == "_TagCircle");
+    REQUIRE(back.inserts[0].attribs.at(0).value == "4");
+    REQUIRE(back.inserts[1].attribs.at(0).value == "5");
+    REQUIRE(back.inserts[1].pos.x == Approx(27.5)); // the next in the row
+
+    // AutoCAD's MULTILEADER with block content: the block by its record's handle (341), its
+    // place (15/25) and scale (16), the values after the context (177, 302).
+    const std::string acad =
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n"
+        "0\nBLOCK_RECORD\n5\nB1\n100\nAcDbSymbolTableRecord\n100\nAcDbBlockTableRecord\n2\n_TagBox\n"
+        "0\nENDTAB\n0\nENDSEC\n"
+        "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\n_TagBox\n70\n0\n10\n0\n20\n0\n"
+        "0\nLINE\n8\n0\n10\n-1\n20\n-1\n11\n1\n21\n-1\n"
+        "0\nATTDEF\n8\n0\n10\n0\n20\n0\n40\n1\n1\nTAGNUMBER\n3\nEnter tag number\n2\nTAGNUMBER\n70\n0\n"
+        "0\nENDBLK\n0\nENDSEC\n"
+        "0\nSECTION\n2\nENTITIES\n0\nMULTILEADER\n5\nM1\n8\n0\n100\nAcDbMLeader\n270\n2\n"
+        "300\nCONTEXT_DATA{\n40\n1.0\n10\n0\n20\n0\n30\n0\n41\n1.5\n290\n0\n296\n1\n341\nB1\n"
+        "14\n0\n24\n0\n34\n1\n15\n30\n25\n12\n35\n0\n16\n3\n26\n3\n36\n3\n46\n0\n"
+        "302\nLEADER{\n290\n1\n291\n1\n10\n27\n20\n12\n30\n0\n11\n1\n21\n0\n31\n0\n40\n2\n"
+        "304\nLEADER_LINE{\n10\n0\n20\n0\n30\n0\n305\n}\n303\n}\n301\n}\n"
+        "170\n1\n172\n1\n344\nB1\n330\nA9\n177\n1\n44\n0\n302\n42\n"
+        "0\nENDSEC\n0\nEOF\n";
+    io::Document ac;
+    REQUIRE(io::parse_dxf(acad, ac).ok);
+    REQUIRE(ac.mleaders.size() == 1);
+    REQUIRE(ac.mleaders[0].content_block == "_TagBox");
+    REQUIRE(ac.mleaders[0].content == "42");
+    REQUIRE(ac.mleaders[0].block.pos == Vec2{30, 12});
+    REQUIRE(ac.mleaders[0].block.height == Approx(3.0));
+}

@@ -12,6 +12,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/hatch.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1592,7 +1593,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                 }
             }
         }
-        if (m.block.str_len != 0 || !m.content.empty()) {
+        if (m.content_block.empty() && (m.block.str_len != 0 || !m.content.empty())) {
             emit_mtext(m.block, m.content, m.props, m.font); // carry the label font (code 7)
         }
     }
@@ -1859,6 +1860,70 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     };
     for (const DocInsert& in : doc.inserts) {
         emit_insert(in);
+    }
+    // A multileader with block content (#61): its blocks as references after the LEADER
+    // written above, each item with its attribute values.
+    for (const DocMLeader& m : doc.mleaders) {
+        if (m.content_block.empty()) {
+            continue;
+        }
+        const DocBlockDef* def = nullptr;
+        for (const DocBlockDef& b : doc.block_defs) {
+            def = same_table_name(b.name, m.content_block) ? &b : def;
+        }
+        if (def == nullptr) {
+            continue;
+        }
+        // The block's size, for laying out collected items (its outline's extents).
+        Vec2 lo{1e300, 1e300};
+        Vec2 hi{-1e300, -1e300};
+        const auto grow = [&](Vec2 p, double r) {
+            lo = {std::min(lo.x, p.x - r), std::min(lo.y, p.y - r)};
+            hi = {std::max(hi.x, p.x + r), std::max(hi.y, p.y + r)};
+        };
+        for (const DocLine& l : def->lines) {
+            grow(l.a, 0.0);
+            grow(l.b, 0.0);
+        }
+        for (const DocCircle& c : def->circles) {
+            grow(c.center, c.radius);
+        }
+        for (const DocArc& a : def->arcs) {
+            grow(a.center, a.radius);
+        }
+        for (const DocPolyline& p : def->polylines) {
+            for (const Vec2& v : p.points) {
+                grow(v, 0.0);
+            }
+        }
+        const double scale = m.block.height > 0.0 ? m.block.height : 1.0;
+        const Vec2 size = hi.x >= lo.x ? (hi - lo) * scale : Vec2{scale, scale};
+        const double cs = std::cos(m.block.rotation);
+        const double sn = std::sin(m.block.rotation);
+        std::size_t start = 0;
+        for (std::size_t k = 0;; ++k) {
+            const std::size_t end = m.content.find('\x1E', start);
+            const std::string item = m.content.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            const Vec2 off = collected_offset(k, m.collect, size);
+            DocInsert in;
+            in.block_name = def->name;
+            in.pos = m.block.pos + Vec2{off.x * cs - off.y * sn, off.x * sn + off.y * cs};
+            in.scale_x = scale;
+            in.scale_y = scale;
+            in.rotation = m.block.rotation;
+            in.props = m.props;
+            std::size_t vs = 0;
+            for (const DocAttDef& a : def->attdefs) {
+                const std::size_t ve = item.find('\x1F', vs);
+                in.attribs.push_back({a.text.content, vs <= item.size() ? item.substr(vs, ve == std::string::npos ? std::string::npos : ve - vs) : std::string()});
+                vs = ve == std::string::npos ? item.size() + 1 : ve + 1;
+            }
+            emit_insert(in);
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
     }
     // Raster images: AutoCAD's IMAGE entity -- insertion point, the U and V vectors
     // (one pixel each, in drawing units), the size in pixels, the IMAGEDEF it shows, and
@@ -2755,6 +2820,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     std::map<std::string, std::size_t> dim_by_handle; // the drawing's dimensions by handle
     std::set<std::string> associated;                 // those a DIMASSOC object names
     bool dimassoc_var = false;
+    std::map<std::string, std::string> block_record_names; // BLOCK_RECORD names, by handle (#61)
     const auto upper_hex = [](std::string h) {
         for (char& ch : h) {
             ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -3673,6 +3739,14 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             bool in_leg = false;
             bool in_line = false;
             bool past_context = false;
+            // Block content (#61): in CONTEXT_DATA 296 says so, 341 the block's record, 15/25
+            // where it is and 16 its scale; after it, each attribute's index (177) and value (302).
+            bool has_block = false;
+            std::string block_record;
+            Vec2 block_pos{};
+            double block_scale = 1.0;
+            long attr_index = 0;
+            std::vector<std::pair<long, std::string>> attr_values;
             for (const Pair& q : body) {
                 if (q.code == 300 && q.value == "CONTEXT_DATA{") {
                     in_context = true;
@@ -3733,9 +3807,28 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     case 171:
                         attach = to_l(q.value);
                         break;
+                    case 296:
+                        has_block = to_l(q.value) == 1;
+                        break;
+                    case 341:
+                        block_record = q.value;
+                        break;
+                    case 15:
+                        block_pos.x = to_d(q.value);
+                        break;
+                    case 25:
+                        block_pos.y = to_d(q.value);
+                        break;
+                    case 16:
+                        block_scale = to_d(q.value);
+                        break;
                     default:
                         break;
                     }
+                } else if (past_context && q.code == 177) {
+                    attr_index = to_l(q.value);
+                } else if (past_context && q.code == 302) {
+                    attr_values.emplace_back(attr_index, q.value);
                 } else if (past_context && q.code == 170) {
                     line_type = to_l(q.value);
                 }
@@ -3803,6 +3896,20 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             m.props = props_of(body);
             if (content.empty()) {
                 m.block.pos = m.vertices.back();
+            }
+            if (const auto rec = block_record_names.find(upper_hex(block_record));
+                has_block && rec != block_record_names.end()) {
+                // The block, its values (by their index) in the text, its scale as its size.
+                std::stable_sort(attr_values.begin(), attr_values.end(),
+                                 [](const auto& a, const auto& b) { return a.first < b.first; });
+                m.content_block = rec->second;
+                m.content.clear();
+                for (std::size_t k = 0; k < attr_values.size(); ++k) {
+                    m.content += (k == 0 ? "" : "\x1F") + attr_values[k].second;
+                }
+                m.block = MTextBlock{};
+                m.block.pos = block_pos;
+                m.block.height = block_scale > 0.0 ? block_scale : 1.0;
             }
             if (line_type == 0) {
                 m.leader_flags |= LeaderForm::kNoLine;
@@ -4570,8 +4677,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             continue;
         }
         if (section == "TABLES" && p.value == "BLOCK_RECORD") {
-            // A block's insertion units (70), matched to its definition by name below.
+            // A block's insertion units (70), matched to its definition by name below, and its
+            // handle, by which a multileader names its block.
             std::string name;
+            std::string handle;
             long units = 0;
             ++i;
             while (i < n && pairs[i].code != 0) {
@@ -4579,8 +4688,13 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     name = pairs[i].value;
                 } else if (pairs[i].code == 70) {
                     units = to_l(pairs[i].value);
+                } else if (pairs[i].code == 5 && handle.empty()) {
+                    handle = pairs[i].value;
                 }
                 ++i;
+            }
+            if (!name.empty() && !handle.empty()) {
+                block_record_names[upper_hex(handle)] = name;
             }
             if (!name.empty() && units > 0 && units <= 24) {
                 block_units[name] = static_cast<std::uint8_t>(units);
