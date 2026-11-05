@@ -46,6 +46,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   filtered by name; a value typed in is set as the variable's own command sets it.
 - **LAYOUTMERGE** (#77): layouts made one -- each layout's objects onto the destination's
   sheet, where they were, and the layout deleted.
+- **Multilines inside blocks** (#45) -- BLOCK takes multilines in with the rest, and a block
+  draws them wherever it is inserted, each line in its colour and linetype, filled and cut as
+  the multiline is. EXPLODE (and REFEDIT) gives them back as multilines, a mirrored reference's
+  turned over as MIRROR turns one; WBLOCK and copying between drawings carry them, and a
+  multiline style used inside a block counts as in use. An AutoCAD drawing's come with it.
+  Kept in the drawing (format v49) and in DXF.
 - **Text in complex linetypes** (#68) -- a linetype's text elements, as acad.lin writes them
   (`["GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05]`), are drawn along the line, scaled with the
   pattern and turned to read upright where the U option asks for it. Loaded from a .lin file

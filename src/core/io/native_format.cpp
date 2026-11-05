@@ -819,6 +819,43 @@ std::string serialize_native(const Document& doc) {
         append_props(s, x.props);
         s += '\n';
     }
+    // A multiline, in model space or inside a block definition (v49).
+    const auto emit_mline = [&](const DocMLine& m) {
+        s += "MLINE ";
+        append_uint(s, m.style);
+        s += ' ';
+        append_double(s, m.scale);
+        s += ' ';
+        append_uint(s, m.justification);
+        s += ' ';
+        append_uint(s, (m.closed ? 1u : 0u) | (m.no_start_caps ? 2u : 0u) | (m.no_end_caps ? 4u : 0u));
+        s += ' ';
+        append_uint(s, m.vertices.size());
+        for (const Vec2& v : m.vertices) {
+            s += ' ';
+            append_vec(s, v);
+        }
+        append_props(s, m.props);
+        s += '\n';
+        for (std::size_t seg = 0; seg < m.breaks.size(); ++seg) {
+            for (std::size_t el = 0; el < m.breaks[seg].size(); ++el) {
+                if (m.breaks[seg][el].empty()) {
+                    continue;
+                }
+                s += "MLBREAKS ";
+                append_uint(s, seg);
+                s += ' ';
+                append_uint(s, el);
+                s += ' ';
+                append_uint(s, m.breaks[seg][el].size());
+                for (const double d : m.breaks[seg][el]) {
+                    s += ' ';
+                    append_double(s, d);
+                }
+                s += '\n';
+            }
+        }
+    };
     // v42: MLSTYLE flags start end fill_mode r g b n [offset color_mode r g b lt_mode lt]... name desc
     // -- the multiline styles (written when there is more than STANDARD as it starts), then
     // MLSETTINGS current just scale, then MLINE style scale just flags n x y ... <props7> and
@@ -875,40 +912,7 @@ std::string serialize_native(const Document& doc) {
             s += '\n';
         }
         for (const DocMLine& m : doc.mlines) {
-            s += "MLINE ";
-            append_uint(s, m.style);
-            s += ' ';
-            append_double(s, m.scale);
-            s += ' ';
-            append_uint(s, m.justification);
-            s += ' ';
-            append_uint(s, (m.closed ? 1u : 0u) | (m.no_start_caps ? 2u : 0u) | (m.no_end_caps ? 4u : 0u));
-            s += ' ';
-            append_uint(s, m.vertices.size());
-            for (const Vec2& v : m.vertices) {
-                s += ' ';
-                append_vec(s, v);
-            }
-            append_props(s, m.props);
-            s += '\n';
-            for (std::size_t seg = 0; seg < m.breaks.size(); ++seg) {
-                for (std::size_t el = 0; el < m.breaks[seg].size(); ++el) {
-                    if (m.breaks[seg][el].empty()) {
-                        continue;
-                    }
-                    s += "MLBREAKS ";
-                    append_uint(s, seg);
-                    s += ' ';
-                    append_uint(s, el);
-                    s += ' ';
-                    append_uint(s, m.breaks[seg][el].size());
-                    for (const double d : m.breaks[seg][el]) {
-                        s += ' ';
-                        append_double(s, d);
-                    }
-                    s += '\n';
-                }
-            }
+            emit_mline(m);
         }
     }
     for (const DocCircle& c : doc.circles) {
@@ -1455,6 +1459,9 @@ std::string serialize_native(const Document& doc) {
         for (const DocHatch& h : b.hatches) { // v46
             emit_hatch(h);
         }
+        for (const DocMLine& m : b.mlines) { // v49
+            emit_mline(m);
+        }
     };
     for (const DocInsert& ins : doc.inserts) {
         emit_insert_rec(ins);
@@ -1962,6 +1969,7 @@ IoResult parse_native(std::string_view text, Document& out) {
     std::vector<DocMText>* t_mtexts = &doc.mtexts;
     std::vector<DocInsert>* t_inserts = &doc.inserts;
     std::vector<DocHatch>* t_hatches = &doc.hatches;
+    std::vector<DocMLine>* t_mlines = &doc.mlines;
     const auto target_model = [&] {
         t_lines = &doc.lines;
         t_circles = &doc.circles;
@@ -1972,6 +1980,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_mtexts = &doc.mtexts;
         t_inserts = &doc.inserts;
         t_hatches = &doc.hatches;
+        t_mlines = &doc.mlines;
     };
     const auto target_block = [&] {
         t_lines = &cur_block.lines;
@@ -1983,6 +1992,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_mtexts = &cur_block.mtexts;
         t_inserts = &cur_block.inserts;
         t_hatches = &cur_block.hatches;
+        t_mlines = &cur_block.mlines;
     };
 
     const auto fail = [&](const std::string& why) {
@@ -3696,18 +3706,18 @@ IoResult parse_native(std::string_view text, Document& out) {
             for (std::size_t k = 0; k + 1 < vals.size(); k += 2) {
                 m.vertices.push_back({vals[k], vals[k + 1]});
             }
-            doc.mlines.push_back(std::move(m));
+            t_mlines->push_back(std::move(m));
         } else if (key == "MLBREAKS") {
             std::uint64_t seg = 0;
             std::uint64_t el = 0;
             std::uint64_t n = 0;
             vals.clear();
-            if (doc.mlines.empty() || tok.size() < 4 || !to_uint(tok[1], seg) || !to_uint(tok[2], el) ||
+            if (t_mlines->empty() || tok.size() < 4 || !to_uint(tok[1], seg) || !to_uint(tok[2], el) ||
                 !to_uint(tok[3], n) || tok.size() != 4 + n || !parse_doubles(tok, 4, n, vals) || seg > 100000 ||
                 el > 1000) {
                 return fail("malformed MLBREAKS");
             }
-            auto& br = doc.mlines.back().breaks;
+            auto& br = t_mlines->back().breaks;
             if (br.size() <= seg) {
                 br.resize(seg + 1);
             }

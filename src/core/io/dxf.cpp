@@ -1105,10 +1105,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // 71, then per vertex its point (11), the direction of the segment from it (12) and the
     // mitre direction (13), and per element 74 parameters (41): how far along the mitre the
     // element starts, then the gaps along the segment from there.
-    for (const DocMLine& m : doc.mlines) {
+    // In model space or inside a block definition.
+    const auto emit_mline = [&](const DocMLine& m) {
         const std::size_t nv = m.vertices.size();
         if (nv < 2) {
-            continue;
+            return;
         }
         static const MLineStyle kStandard{};
         const MLineStyle& mst = m.style < doc.mline_styles.size() ? doc.mline_styles[m.style] : kStandard;
@@ -1162,6 +1163,9 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                 code_i(s, 75, 0);
             }
         }
+    };
+    for (const DocMLine& m : doc.mlines) {
+        emit_mline(m);
     }
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
@@ -2160,6 +2164,9 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
             for (const DocHatch& h : b.hatches) {
                 emit_hatch(h, kInBlock);
+            }
+            for (const DocMLine& m : b.mlines) {
+                emit_mline(m);
             }
             for (const DocAttDef& a : b.attdefs) {
                 code(s, 0, "ATTDEF");
@@ -4576,6 +4583,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     std::vector<std::vector<Pair>> image_bodies;
     std::vector<std::vector<Pair>> mline_bodies;
+    // A block definition's multilines, kept with the block's place until the styles are read.
+    std::vector<std::vector<Pair>> block_mline_bodies_cur;
+    std::vector<std::pair<std::size_t, std::vector<std::vector<Pair>>>> block_mline_bodies;
     std::vector<MLineStyle> mline_styles_read; // MLINESTYLE objects, in the file's order
     std::string current_mlstyle_name;          // $CMLSTYLE
     struct ImageDefRecord {
@@ -4597,7 +4607,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     Sink block_sink{&block.lines,  &block.circles, &block.arcs, &block.polylines, &block.texts,
                     &block.mtexts, nullptr,        nullptr,     nullptr,          &block.inserts,
                     &block.hatches, nullptr,       nullptr,     nullptr,          nullptr,
-                    &block.attdefs, nullptr}; // images are not held inside block definitions
+                    &block.attdefs, nullptr, &block_mline_bodies_cur}; // images are not held in blocks
     bool in_block = false;
     // The dimension blocks that dimensions inside other blocks draw with. They can come
     // before or after the block using them, so these are found first.
@@ -4947,6 +4957,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             if (type == "BLOCK") {
                 block = DocBlockDef{};
+                block_mline_bodies_cur.clear();
                 if (const std::string* nm = find(body, 2)) {
                     block.name = *nm;
                 }
@@ -4963,6 +4974,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                            (!is_dimension_block(block.name) || block_dimensions.contains(block.name));
             } else if (type == "ENDBLK") {
                 if (in_block) {
+                    if (!block_mline_bodies_cur.empty()) {
+                        block_mline_bodies.emplace_back(doc.block_defs.size(), std::move(block_mline_bodies_cur));
+                        block_mline_bodies_cur.clear();
+                    }
                     doc.block_defs.push_back(std::move(block));
                     block = DocBlockDef{};
                     in_block = false;
@@ -5025,7 +5040,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     if (!current_mlstyle_name.empty()) {
         doc.current_mline_style = mline_style_named(current_mlstyle_name);
     }
-    for (const std::vector<Pair>& body : mline_bodies) {
+    // A multiline from its body, or nothing for one of fewer than two vertices.
+    const auto mline_of = [&](const std::vector<Pair>& body) -> std::optional<DocMLine> {
         DocMLine m;
         m.props = props_of(body);
         if (const std::string* sn = find(body, 2)) {
@@ -5070,10 +5086,22 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 m.breaks[seg][static_cast<std::size_t>(element)].push_back(to_d(q.value));
             }
         }
-        if (m.vertices.size() >= 2) {
-            doc.mlines.push_back(std::move(m));
-        } else {
+        if (m.vertices.size() < 2) {
             ++skipped["MLINE"];
+            return std::nullopt;
+        }
+        return m;
+    };
+    for (const std::vector<Pair>& body : mline_bodies) {
+        if (std::optional<DocMLine> m = mline_of(body)) {
+            doc.mlines.push_back(std::move(*m));
+        }
+    }
+    for (const auto& [at, bodies] : block_mline_bodies) {
+        for (const std::vector<Pair>& body : bodies) {
+            if (std::optional<DocMLine> m = mline_of(body); m && at < doc.block_defs.size()) {
+                doc.block_defs[at].mlines.push_back(std::move(*m));
+            }
         }
     }
 

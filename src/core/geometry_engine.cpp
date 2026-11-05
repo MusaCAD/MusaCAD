@@ -6206,6 +6206,10 @@ void GeometryEngine::apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at
             e.props.layer = ensure_layer(e.props.layer);
             e.props.linetype = ensure_linetype(e.props.linetype);
         }
+        for (auto& e : def.content.mlines) {
+            e.props.layer = ensure_layer(e.props.layer);
+            e.props.linetype = ensure_linetype(e.props.linetype);
+        }
         for (auto& ins : def.content.inserts) {
             ins.block = ensure_block(ins.block); // recursive closure (block tree)
             ins.props.layer = ensure_layer(ins.props.layer);
@@ -8366,6 +8370,30 @@ void GeometryEngine::apply_explode(std::uint64_t group, bool burst, const Nested
                 hc.iso = bh.iso;
                 parts.push_back(std::move(hc));
             }
+            for (const MLineData& bm : def.content.mlines) {
+                AddMLineCommand mc;
+                for (const Vec2& p : bm.vertices) {
+                    mc.points.push_back(xf(p));
+                }
+                mc.closed = bm.closed;
+                mc.style = bm.style;
+                // Its offsets and gaps scale with the reference; a mirrored one turns its
+                // sides over, as MIRROR does.
+                mc.scale = bm.scale * us * (in->scale_x * in->scale_y < 0.0 ? -1.0 : 1.0);
+                mc.justification = bm.justification;
+                mc.props = bm.props;
+                mc.breaks = bm.breaks;
+                for (auto& seg : mc.breaks) {
+                    for (auto& el : seg) {
+                        for (double& d : el) {
+                            d *= us;
+                        }
+                    }
+                }
+                mc.no_start_caps = bm.no_start_caps;
+                mc.no_end_caps = bm.no_end_caps;
+                parts.push_back(std::move(mc));
+            }
             break;
         }
         case EntityKind::Dimension: {
@@ -8975,6 +9003,9 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Insert:
             content.inserts.push_back(*st.insert(h)); // nests
             break;
+        case EntityKind::MLine:
+            content.mlines.push_back(*st.mline(h));
+            break;
         case EntityKind::Point:
         case EntityKind::Spline:
         case EntityKind::Dimension:
@@ -8987,7 +9018,6 @@ void collect_block_content_from(const GeometryStore& st, const std::vector<Entit
         case EntityKind::Table:
         case EntityKind::Xline:
         case EntityKind::Ellipse:
-        case EntityKind::MLine:
             ++skipped; // the block content cannot hold this kind yet: left in place
             continue;
         }
@@ -9012,6 +9042,7 @@ std::vector<EntityHandle> block_material(const GeometryStore& st) {
     collect(st.mtexts(), EntityKind::MText);
     collect(st.inserts(), EntityKind::Insert);
     collect(st.hatches(), EntityKind::Hatch);
+    collect(st.mlines(), EntityKind::MLine);
     for (std::uint32_t i = 0; i < st.texts().slot_count(); ++i) {
         if (st.texts().alive(i) && st.texts().data()[i].props.space() == 0) {
             out.push_back(EntityHandle{i, st.texts().generations()[i], EntityKind::Text});
@@ -12049,6 +12080,17 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
             dh.color2 = bh.color2;
             dh.iso = bh.iso;
             doc.hatches.push_back(std::move(dh));
+        }
+        for (const MLineData& bm : def->content.mlines) {
+            io::DocMLine dm{bm.vertices, bm.breaks, bm.style, bm.scale, bm.justification, bm.closed,
+                            bm.no_start_caps, bm.no_end_caps, bm.props};
+            for (Vec2& p : dm.vertices) {
+                p = p - o;
+            }
+            doc.mlines.push_back(std::move(dm));
+        }
+        if (!def->content.mlines.empty()) {
+            doc.mline_styles = store_.mline_styles(); // the styles they are drawn in
         }
         if (!def->content.inserts.empty()) {
             // Nested inserts need their definitions: carry the whole block table.

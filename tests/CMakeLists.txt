@@ -208,6 +208,7 @@ set(_musacad_test_files
     test_dxf_image.cpp
     test_dxf_dimensions.cpp
     test_block_hatches.cpp
+    test_block_mlines.cpp
     test_dxf_dimassoc.cpp
     test_dxf_r2000.cpp
     test_hatch_gradients.cpp

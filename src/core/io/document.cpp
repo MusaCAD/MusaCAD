@@ -512,6 +512,11 @@ Document document_from_store(const GeometryStore& store) {
             dh.iso = h.iso;
             bd.hatches.push_back(std::move(dh));
         }
+        for (const MLineData& m : b->content.mlines) {
+            bd.mlines.push_back(DocMLine{m.vertices, m.breaks, m.style, m.scale, m.justification, m.closed,
+                                         m.no_start_caps, m.no_end_caps, m.props});
+            mline::trim_breaks(bd.mlines.back().breaks);
+        }
         for (const BlockAttDef& a : b->content.attdefs) {
             bd.attdefs.push_back(DocAttDef{DocText{a.text.pos, a.text.height, a.text.rotation,
                                                    a.text.justify, a.tag, a.text.props, {}, 0,
@@ -615,6 +620,10 @@ void populate_store(GeometryStore& store, const Document& doc) {
             for (const DocHatch& h : bd.hatches) {
                 cb.content.hatches.push_back(BlockHatch{h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle,
                                                         h.pattern_origin, h.props, h.color2, h.iso});
+            }
+            for (const DocMLine& m : bd.mlines) {
+                cb.content.mlines.push_back(MLineData{m.vertices, m.breaks, m.style, m.scale, m.justification,
+                                                      m.closed, m.no_start_caps, m.no_end_caps, m.props});
             }
             for (const DocAttDef& a : bd.attdefs) {
                 cb.content.attdefs.push_back(

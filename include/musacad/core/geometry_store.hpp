@@ -567,6 +567,7 @@ struct BlockContent {
     std::vector<BlockAttDef> attdefs; ///< attributes (ATTDEF), in prompt order
     std::vector<InsertData> inserts; ///< nested block references
     std::vector<BlockHatch> hatches; ///< fills and patterns (v46)
+    std::vector<MLineData> mlines;   ///< multilines (v49), in the drawing's multiline styles
 };
 
 /// The names of blocks and layers are compared without regard to case, as AutoCAD compares

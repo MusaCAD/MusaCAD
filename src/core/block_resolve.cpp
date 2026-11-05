@@ -13,6 +13,7 @@
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/math/mat3.hpp"
 #include "musacad/core/math/math.hpp"
+#include "musacad/core/mline.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 #include "musacad/core/text/text_codes.hpp"
@@ -220,6 +221,38 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
             out.push_back(InsertSeg{xform.transform_point(sg.a), xform.transform_point(sg.b), rp.color,
                                     rp.lineweight, Linetype::Continuous});
         }
+    }
+    // Multilines, as in model space: each element in its colour and linetype (ByLayer the
+    // multiline's layer's, ByBlock the multiline's own), the caps and joints in the
+    // multiline's, the fill under them -- worked out in the block's frame and placed.
+    for (const MLineData& m : bc.mlines) {
+        static const MLineStyle kStandard{};
+        const MLineStyle* st = store.mline_style(m.style);
+        const MLineStyle& style = st != nullptr ? *st : kStandard;
+        const ResolvedProps rp = member_props(store, m.props, inherited);
+        EntityProps layer_props = m.props;
+        layer_props.flags |= EntityProps::kColorByLayer | EntityProps::kLinetypeByLayer;
+        const ResolvedProps by_layer = member_props(store, layer_props, inherited);
+        const auto color_of = [&](std::uint8_t mode, Rgb own) {
+            return mode == 0 ? own : mode == 1 ? by_layer.color : rp.color;
+        };
+        const mline::Geometry g = mline::geometry(m, style);
+        if (fills != nullptr && store.fillmode()) {
+            const Rgb fc = color_of(style.fill_mode, style.fill_color);
+            for (std::size_t i = 0; i + 2 < g.fill.size(); i += 3) {
+                fills->push_back(InsertFill{xform.transform_point(g.fill[i]), xform.transform_point(g.fill[i + 1]),
+                                            xform.transform_point(g.fill[i + 2]), fc});
+            }
+        }
+        for (const mline::Geometry::Piece& p : g.pieces) {
+            const MLineElement& el = style.elements[p.element];
+            const Linetype lt = el.linetype_mode == 0   ? el.linetype
+                                : el.linetype_mode == 1 ? by_layer.linetype
+                                                        : rp.linetype;
+            out.push_back(InsertSeg{xform.transform_point(p.a), xform.transform_point(p.b),
+                                    color_of(el.color_mode, el.color), rp.lineweight, lt});
+        }
+        emit_pairs_transformed(xform, g.caps, rp, out);
     }
     std::vector<Vec2> tseg;
     for (const BlockText& t : bc.texts) {

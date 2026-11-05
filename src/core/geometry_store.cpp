@@ -1756,6 +1756,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
         for (const auto& v : bc.inserts) check(v);
         for (const auto& v : bc.attdefs) check(v.text);
         for (const auto& v : bc.hatches) check(v);
+        for (const auto& v : bc.mlines) check(v);
     }
     return used;
 }
@@ -1797,6 +1798,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
         for (auto& v : bc.inserts) fix(v);
         for (auto& v : bc.attdefs) fix(v.text);
         for (auto& v : bc.hatches) fix(v);
+        for (auto& v : bc.mlines) fix(v);
     }
     // Viewports: their own layer, and the list of layers frozen in them (VPLAYER).
     for_each_live_mut(viewports_, [&](ViewportData& v) {
@@ -1982,6 +1984,11 @@ bool GeometryStore::mline_style_in_use(std::uint16_t index) const noexcept {
             used = true;
         }
     });
+    for (const BlockDef& b : blocks_) { // and the multilines inside block definitions
+        for (const MLineData& m : b.content.mlines) {
+            used = used || m.style == index;
+        }
+    }
     return used;
 }
 
@@ -1998,6 +2005,13 @@ bool GeometryStore::remove_mline_style(std::uint16_t index) {
             --m.style;
         }
     });
+    for (BlockDef& b : blocks_) {
+        for (MLineData& m : b.content.mlines) {
+            if (m.style > index) {
+                --m.style;
+            }
+        }
+    }
     return true;
 }
 
