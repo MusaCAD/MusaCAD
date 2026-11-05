@@ -389,6 +389,7 @@ public:
     std::function<void(bool)> otrack_mode_callback_;
     std::atomic<int> snap_type_{0}; ///< the published snap's type, for the tracking label
     QTimer* rest_timer_ = nullptr;  ///< fires once the cursor has rested (OTRACK acquires)
+    QTimer* hatch_hover_timer_ = nullptr; ///< HATCH's pick preview: asked for once the cursor rests
     QTimer* grip_hover_timer_ = nullptr; ///< resting on a grip opens its menu (multi-functional grips)
     core::GripInfo grip_hover_{};        ///< the grip rested on
     bool grip_hovering_ = false;
@@ -998,6 +999,7 @@ private:
     bool last_fillet_sharp_ = false;
     // TRIM / EXTEND's hover band, streamed only on change.
     bool trim_preview_sent_ = false;
+    bool hatch_preview_sent_ = false;
     core::Vec2 last_trim_at_{};
     bool last_trim_extend_ = false;
     // PASTECLIP's band (the clip at the cursor), streamed only on change.

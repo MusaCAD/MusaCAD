@@ -226,6 +226,9 @@ struct PreviewSpec {
     bool trim_hover = false;
     bool trim_extend = false;
     bool trim_quick = true;
+    /// HATCH at its pick prompt: once the cursor rests, the viewport asks the engine for the
+    /// area a pick there would fill, and it is outlined (#41).
+    bool hatch_hover = false;
     bool paste_band = false;
 };
 

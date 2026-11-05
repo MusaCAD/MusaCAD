@@ -329,3 +329,33 @@ TEST_CASE("#41 HATCHEDIT's prompts for Style, DRaw order, ASsociative, Transpare
     REQUIRE(h.proc.has_active_command()); // the options again
     h.proc.cancel();
 }
+
+TEST_CASE("#41 HATCH's pick preview: the area at the cursor outlined, none outside, gone when it ends") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddPolylineCommand{{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, true, 1});
+    engine.submit(HatchPreviewCommand{{5, 5}, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.size() == 8; })); // its 4 sides
+    engine.submit(HatchPreviewCommand{{6, 4}, true}); // still in it: the same outline
+    engine.submit(HatchPreviewCommand{{50, 50}, true}); // no area there
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.empty(); }));
+    engine.submit(HatchPreviewCommand{{5, 5}, true});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.size() == 8; }));
+    engine.submit(HatchPreviewCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grip_preview_segments.empty(); }));
+    engine.stop();
+}
+
+TEST_CASE("#41 HATCH asks for the pick preview at its pick prompt only") {
+    H h;
+    h.run({"HATCH"});
+    REQUIRE(h.proc.preview().hatch_hover);
+    h.run({"T"}); // seTtings: the pattern prompt
+    REQUIRE_FALSE(h.proc.preview().hatch_hover);
+    h.run({"SOLID"});
+    REQUIRE(h.proc.preview().hatch_hover);
+    h.run({"S"}); // Select objects
+    REQUIRE_FALSE(h.proc.preview().hatch_hover);
+    h.proc.cancel();
+    REQUIRE_FALSE(h.proc.preview().hatch_hover);
+}

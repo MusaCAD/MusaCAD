@@ -2854,6 +2854,11 @@ void HatchCommand::main_prompt(CommandContext& ctx) {
 }
 
 void HatchCommand::start(CommandContext& ctx) {
+    struct Refresh {
+        const HatchCommand& self;
+        CommandContext& ctx;
+        ~Refresh() { self.hover_preview(ctx); }
+    } refresh{*this, ctx};
     if (gradient_ && !core::hatch::is_gradient(pattern_)) {
         // GRADIENT: HATCH with the gradient fill, its shape, colours and angle as last set
         pattern_ = gradient_shape_ == "GR_LINEAR" ? "GRADIENT" : gradient_shape_;
@@ -3181,7 +3186,23 @@ void HatchCommand::advanced_input(CommandContext& ctx, const std::string& t, con
     advanced_prompt(ctx);
 }
 
+void HatchCommand::hover_preview(CommandContext& ctx) const {
+    if (!done_ && mode_ == Mode::PickPoint) {
+        PreviewSpec pv;
+        pv.hatch_hover = true;
+        ctx.set_preview(std::move(pv));
+    } else {
+        ctx.clear_preview();
+    }
+}
+
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
+    // The pick preview follows the prompt this input leaves the command at.
+    struct Refresh {
+        const HatchCommand& self;
+        CommandContext& ctx;
+        ~Refresh() { self.hover_preview(ctx); }
+    } refresh{*this, ctx};
     const std::string t = trimmed(text);
     const std::string up = upper(t);
     switch (mode_) {

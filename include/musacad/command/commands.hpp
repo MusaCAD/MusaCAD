@@ -580,6 +580,8 @@ private:
     static inline double angle_ = 0.0;             // HPANG, radians (also the gradient's direction)
     static inline core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
     static inline std::string gradient_shape_ = "GR_LINEAR"; // the gradient's shape (#41)
+    /// The pick preview while the command waits at its pick prompt, none at the others.
+    void hover_preview(CommandContext& ctx) const;
     static inline std::optional<core::Vec2> origin_;    // HPORIGIN when set
     static inline std::uint8_t origin_corner_ = 0;      // Default to boundary extents
     static inline std::string layer_;                   // HPLAYER ("": the current layer)

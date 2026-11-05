@@ -1092,6 +1092,12 @@ struct TrimPreviewCommand {
     bool quick = true;
     bool active = false;
 };
+/// HATCH's pick (#41): the area a pick at `at` would fill, outlined while the cursor rests
+/// there. `active` false ends it.
+struct HatchPreviewCommand {
+    Vec2 at{};
+    bool active = false;
+};
 /// FILLET / CHAMFER's hover preview: what a second pick at `at` would make with the first
 /// object (picked at `first`) -- the objects as they would be and the arc or bevel -- made by
 /// the same code on copies. `active` false ends it.
@@ -2594,7 +2600,7 @@ using Command =
                  SetInsertAttribsCommand, SetBlockAttDefsCommand, VportsCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
-                 TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand,
+                 TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

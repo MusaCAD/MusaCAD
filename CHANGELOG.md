@@ -27,6 +27,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   gradient's name works at the pattern prompt too. They plot as they show, and go to and come
   from DXF as AutoCAD's gradients. Gradients are drawn in twice as many steps as before, with
   no hairlines between them in a PDF.
+- **HATCH shows the area a pick would fill** (#41): at the pick prompt, when the cursor rests
+  inside an area, its boundary is outlined, as AutoCAD previews it.
 - **HATCHEDIT's Style, DRaw order, ASsociative and Transparency** (#41). Style
   `[Ignore/Outer/Normal]` leaves out the islands the style does not fill; DRaw order sends the
   hatch to the back or the front, or behind or in front of its boundary; ASsociative makes it

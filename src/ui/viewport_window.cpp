@@ -2317,6 +2317,31 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     }
     rest_timer_->start(); // restarted by every move: it fires once the cursor rests
 
+    // HATCH's pick (#41): once the cursor rests, the area a pick there would fill is outlined.
+    // Asked for only then, so tracing areas never trails the cursor on a large drawing.
+    if (processor_ != nullptr && processor_->has_active_command() && processor_->preview().hatch_hover) {
+        if (hatch_hover_timer_ == nullptr) {
+            hatch_hover_timer_ = new QTimer(this);
+            hatch_hover_timer_->setSingleShot(true);
+            hatch_hover_timer_->setInterval(150);
+            connect(hatch_hover_timer_, &QTimer::timeout, this, [this] {
+                if (processor_ == nullptr || !processor_->has_active_command() || !processor_->preview().hatch_hover ||
+                    !cursor_inside_.load(std::memory_order_relaxed)) {
+                    return;
+                }
+                core::Vec2 at;
+                {
+                    std::scoped_lock lock(camera_mutex_);
+                    at = camera_.screen_to_world(core::Vec2{cursor_px_x_.load(std::memory_order_relaxed),
+                                                            cursor_px_y_.load(std::memory_order_relaxed)});
+                }
+                engine_.submit(core::HatchPreviewCommand{at, true});
+                hatch_preview_sent_ = true;
+            });
+        }
+        hatch_hover_timer_->start();
+    }
+
     // Multi-functional grips: resting on a grip whose object has a menu opens it there.
     if (processor_ != nullptr && !processor_->has_active_command() && !dragging_grip_ && !selecting_ &&
         event->buttons() == Qt::NoButton) {
@@ -3635,6 +3660,12 @@ void ViewportWindow::rebuild_overlay() {
     } else if (trim_preview_sent_) {
         engine_.submit(core::TrimPreviewCommand{});
         trim_preview_sent_ = false;
+    }
+    // HATCH's pick preview ends with the pick prompt.
+    if (hatch_preview_sent_ &&
+        !(processor_ != nullptr && processor_->has_active_command() && processor_->preview().hatch_hover)) {
+        engine_.submit(core::HatchPreviewCommand{});
+        hatch_preview_sent_ = false;
     }
     // PASTECLIP: the clip follows the (snapped) cursor until it is placed, and goes when
     // the prompt does.

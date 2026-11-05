@@ -19317,6 +19317,28 @@ void GeometryEngine::apply_one(const Command& command) {
                 trim_preview_ = c;
                 geom_dirty_ = true; // republish with (or without) the band
             }
+            if constexpr (std::is_same_v<T, HatchPreviewCommand>) {
+                if (!c.active) {
+                    if (hatch_preview_active_) {
+                        hatch_preview_active_ = false;
+                        hatch_preview_loops_.clear();
+                        geom_dirty_ = true;
+                    }
+                } else {
+                    // The area a pick here fills -- the one shown still, while the cursor is in it
+                    // and nothing has changed (the republish below is the one change expected).
+                    const bool same = hatch_preview_active_ && !hatch_preview_loops_.empty() &&
+                                      hatch_preview_version_ == geom_version_ &&
+                                      hatch::point_in_loops(hatch_preview_loops_, c.at);
+                    if (!same) {
+                        const std::optional<std::vector<std::vector<Vec2>>> loops = boundary_loops(c.at);
+                        hatch_preview_loops_ = loops ? *loops : std::vector<std::vector<Vec2>>{};
+                        hatch_preview_active_ = true;
+                        hatch_preview_version_ = geom_version_ + 1;
+                        geom_dirty_ = true;
+                    }
+                }
+            }
             if constexpr (std::is_same_v<T, SetTrimEdgesCommand>) {
                 trim_edge_extend_ = c.edge_extend;
                 if (c.op == SetTrimEdgesCommand::Op::FromSelection && !selection_.empty()) {
@@ -21417,6 +21439,7 @@ void GeometryEngine::apply_one(const Command& command) {
                 std::is_same_v<T, PastePreviewCommand> ||   // rubber band only
                 std::is_same_v<T, SetTrimEdgesCommand> ||   // a setting, not an edit
                 std::is_same_v<T, TrimPreviewCommand> ||    // rubber band only
+                std::is_same_v<T, HatchPreviewCommand> ||   // rubber band only
                 std::is_same_v<T, FilletPreviewCommand> ||  // rubber band only
                 std::is_same_v<T, SetDimLayerCommand> ||    // a setting, not an edit
                 std::is_same_v<T, SetLineweightDisplayCommand> ||
@@ -22357,6 +22380,14 @@ void GeometryEngine::rebuild_and_publish() {
                 build_render_snapshot(sim.store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
                 buf.grip_preview_segments = std::move(tmp.line_vertices);
                 buf.grip_preview_fills = std::move(tmp.fill_vertices);
+            }
+        }
+    } else if (hatch_preview_active_) {
+        // HATCH's pick: the outline of the area a pick at the cursor fills.
+        for (const std::vector<Vec2>& loop : hatch_preview_loops_) {
+            for (std::size_t i = 0; i < loop.size(); ++i) {
+                buf.grip_preview_segments.push_back(loop[i]);
+                buf.grip_preview_segments.push_back(loop[(i + 1) % loop.size()]);
             }
         }
     } else if (trim_preview_active_) {

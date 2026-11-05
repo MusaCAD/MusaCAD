@@ -343,6 +343,11 @@ private:
     bool plan_extend_preview(Vec2 pick, double radius, std::vector<Vec2>& added) const;
     // TRIM / EXTEND's hover preview: the part that would go, or be added, at the cursor.
     bool trim_preview_active_ = false;
+    /// HATCH's pick preview (#41): the area at the cursor, traced again only when the cursor
+    /// leaves it or the drawing has changed since (`hatch_preview_version_`).
+    bool hatch_preview_active_ = false;
+    std::vector<std::vector<Vec2>> hatch_preview_loops_;
+    std::uint64_t hatch_preview_version_ = 0;
     TrimPreviewCommand trim_preview_{};
     bool fillet_preview_active_ = false;
     FilletPreviewCommand fillet_preview_{};
