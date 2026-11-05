@@ -1939,6 +1939,21 @@ struct ArcTextCommand {
     std::uint8_t align = 0;
     std::uint64_t group = 0;
 };
+/// SUPERHATCH (Express Tools, #77): the area round `at` (as HATCH's pick finds it) filled with
+/// copies of a block -- `block` at `scale`, turned by `rotation` -- side by side, each whole
+/// copy a block reference and each copy the boundary cuts its lines cut there; or with copies of
+/// the image or the block reference under `tile_pick` (an image's copies the boundary cuts
+/// clipped to it); or, `wipeout`, a wipeout of the area. One group; one undo step.
+struct SuperHatchCommand {
+    Vec2 at{};
+    std::string block;
+    double scale = 1.0;
+    double rotation = 0.0;
+    std::optional<Vec2> tile_pick;
+    double pick_radius = 0.0;
+    bool wipeout = false;
+    std::uint64_t group = 0;
+};
 struct VpSyncCommand {
     Vec2 master{};
     double pick_radius = 0.0;
@@ -2656,7 +2671,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
-                 AddBlockMLeaderCommand, CollectMLeadersCommand, AlignSpaceCommand, ArcTextCommand,
+                 AddBlockMLeaderCommand, CollectMLeadersCommand, AlignSpaceCommand, ArcTextCommand, SuperHatchCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

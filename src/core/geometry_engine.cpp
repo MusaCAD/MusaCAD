@@ -10151,6 +10151,241 @@ void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
     report(std::to_string(renewed.size()) + (renewed.size() == 1 ? " viewport" : " viewports") + " aligned to the master.");
 }
 
+namespace {
+/// The parts of segment a-b inside `loops` (even-odd: islands are outside): cut where it
+/// crosses a loop's side, each piece kept when its middle is inside.
+void clip_segment_to_loops(Vec2 a, Vec2 b, const std::vector<std::vector<Vec2>>& loops,
+                           std::vector<std::pair<Vec2, Vec2>>& out) {
+    std::vector<double> ts{0.0, 1.0};
+    const Vec2 d = b - a;
+    for (const std::vector<Vec2>& loop : loops) {
+        for (std::size_t i = 0; i < loop.size(); ++i) {
+            const Vec2 p = loop[i];
+            const Vec2 q = loop[(i + 1) % loop.size()];
+            const Vec2 e = q - p;
+            const double den = d.x * e.y - d.y * e.x;
+            if (std::abs(den) < 1e-15) {
+                continue;
+            }
+            const double t = ((p.x - a.x) * e.y - (p.y - a.y) * e.x) / den;
+            const double u = ((p.x - a.x) * d.y - (p.y - a.y) * d.x) / den;
+            if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0) {
+                ts.push_back(t);
+            }
+        }
+    }
+    std::sort(ts.begin(), ts.end());
+    for (std::size_t i = 0; i + 1 < ts.size(); ++i) {
+        if (ts[i + 1] - ts[i] < 1e-12) {
+            continue;
+        }
+        const Vec2 mid = a + d * ((ts[i] + ts[i + 1]) * 0.5);
+        if (hatch::point_in_loops(loops, mid)) {
+            out.emplace_back(a + d * ts[i], a + d * ts[i + 1]);
+        }
+    }
+}
+
+/// The part of polygon `poly` inside the convex polygon `win` (Sutherland-Hodgman).
+std::vector<Vec2> clip_to_convex(std::vector<Vec2> poly, const std::vector<Vec2>& win) {
+    for (std::size_t i = 0; i < win.size() && !poly.empty(); ++i) {
+        const Vec2 p = win[i];
+        const Vec2 e = win[(i + 1) % win.size()] - p;
+        const auto side = [&](Vec2 v) { return e.x * (v.y - p.y) - e.y * (v.x - p.x); }; // > 0: left, inside (CCW)
+        std::vector<Vec2> out;
+        for (std::size_t k = 0; k < poly.size(); ++k) {
+            const Vec2 a = poly[k];
+            const Vec2 b = poly[(k + 1) % poly.size()];
+            const double sa = side(a);
+            const double sb = side(b);
+            if (sa >= 0.0) {
+                out.push_back(a);
+            }
+            if ((sa >= 0.0) != (sb >= 0.0)) {
+                out.push_back(a + (b - a) * (sa / (sa - sb)));
+            }
+        }
+        poly = std::move(out);
+    }
+    return poly;
+}
+} // namespace
+
+void GeometryEngine::apply_super_hatch(const SuperHatchCommand& c) {
+    std::optional<std::vector<std::vector<Vec2>>> found = boundary_loops(c.at);
+    if (!found || found->empty()) {
+        report("Valid hatch boundary not found.");
+        return;
+    }
+    const std::vector<std::vector<Vec2>>& loops = *found;
+    std::vector<EntityHandle> made;
+    const auto make = [&](const Command& add) {
+        const EntityHandle h = create_indexed(add);
+        push_create_item(c.group, h, add);
+        made.push_back(h);
+    };
+    if (c.wipeout) {
+        AddHatchCommand w;
+        w.loops = loops;
+        w.pattern_name = "WIPEOUT";
+        w.group = c.group;
+        make(w);
+    } else {
+        // The tile: a block (by name, or the reference picked) or the image picked.
+        std::optional<std::uint16_t> block;
+        double scale = c.scale > 0.0 ? c.scale : 1.0;
+        double rotation = c.rotation;
+        const ImageData* image = nullptr;
+        if (c.tile_pick) {
+            const EntityHandle t = pick_nearest(*c.tile_pick, c.pick_radius);
+            if (const InsertData* in = t.kind == EntityKind::Insert ? store_.insert(t) : nullptr) {
+                block = in->block;
+                scale = std::abs(in->scale_x) > 0.0 ? std::abs(in->scale_x) : 1.0;
+                rotation = in->rotation;
+            } else if (t.kind == EntityKind::Image) {
+                image = store_.image(t);
+            }
+            if (!block && image == nullptr) {
+                report("Select a block reference or an image to fill with.");
+                return;
+            }
+        } else {
+            for (std::size_t i = 0; i < store_.block_count() && !block; ++i) {
+                const BlockDef* d = store_.block(static_cast<std::uint16_t>(i));
+                if (d != nullptr && same_table_name(d->name, c.block)) {
+                    block = static_cast<std::uint16_t>(i);
+                }
+            }
+            if (!block) {
+                report("Block \"" + c.block + "\" not found.");
+                return;
+            }
+        }
+        // The tile's extents in its own (unturned) frame, from the insertion point.
+        Vec2 lo{0.0, 0.0};
+        Vec2 hi{1.0, 1.0};
+        if (image != nullptr) {
+            rotation = image->rotation;
+            hi = {image->width, image->height};
+        } else if (const auto ext = block_item_extents(store_, *block, scale)) {
+            lo = ext->first;
+            hi = ext->second;
+        }
+        const Vec2 size = hi - lo;
+        if (size.x <= 1e-12 || size.y <= 1e-12) {
+            report("The block has no size to fill with.");
+            return;
+        }
+        const double cs = std::cos(rotation);
+        const double sn = std::sin(rotation);
+        const auto to_world = [&](Vec2 l) { return Vec2{l.x * cs - l.y * sn, l.x * sn + l.y * cs}; };
+        const auto to_local = [&](Vec2 w) { return Vec2{w.x * cs + w.y * sn, -w.x * sn + w.y * cs}; };
+        // The tiles that cover the area, side by side from its lower left (in the tile's frame).
+        Vec2 a0{1e300, 1e300};
+        Vec2 a1{-1e300, -1e300};
+        for (const std::vector<Vec2>& loop : loops) {
+            for (const Vec2 v : loop) {
+                const Vec2 l = to_local(v);
+                a0 = {std::min(a0.x, l.x), std::min(a0.y, l.y)};
+                a1 = {std::max(a1.x, l.x), std::max(a1.y, l.y)};
+            }
+        }
+        const auto nx = static_cast<long>(std::ceil((a1.x - a0.x) / size.x));
+        const auto ny = static_cast<long>(std::ceil((a1.y - a0.y) / size.y));
+        if (nx * ny > 20000) {
+            report("That would take more than 20000 copies: use a larger scale.");
+            return;
+        }
+        std::vector<std::pair<Vec2, Vec2>> pieces;
+        std::vector<InsertSeg> segs;
+        for (long j = 0; j < ny; ++j) {
+            for (long i = 0; i < nx; ++i) {
+                const Vec2 corner = a0 + Vec2{static_cast<double>(i) * size.x, static_cast<double>(j) * size.y};
+                const std::vector<Vec2> rect{to_world(corner), to_world(corner + Vec2{size.x, 0.0}),
+                                             to_world(corner + size), to_world(corner + Vec2{0.0, size.y})};
+                // Whole inside: its corners inside and no side of the area crosses it.
+                bool all_in = true;
+                for (const Vec2 v : rect) {
+                    all_in = all_in && hatch::point_in_loops(loops, v);
+                }
+                std::vector<std::pair<Vec2, Vec2>> edge_bits;
+                for (std::size_t k = 0; k < 4 && all_in; ++k) {
+                    edge_bits.clear();
+                    clip_segment_to_loops(rect[k], rect[(k + 1) % 4], loops, edge_bits);
+                    all_in = edge_bits.size() == 1 && distance(edge_bits[0].first, rect[k]) < 1e-9 &&
+                             distance(edge_bits[0].second, rect[(k + 1) % 4]) < 1e-9;
+                }
+                const Vec2 pos = to_world(corner - lo); // the insertion point that puts it there
+                if (image != nullptr) {
+                    AddImageCommand im;
+                    im.def = image->def;
+                    im.pos = to_world(corner);
+                    im.width = size.x;
+                    im.height = size.y;
+                    im.rotation = rotation;
+                    im.group = c.group;
+                    if (!all_in) {
+                        // Clipped to the area's outer boundary, in the image's fractions.
+                        std::vector<Vec2> part = clip_to_convex(loops.front(), rect);
+                        if (part.size() < 3) {
+                            continue;
+                        }
+                        for (Vec2& v : part) {
+                            const Vec2 l = to_local(v) - corner;
+                            v = {std::clamp(l.x / size.x, 0.0, 1.0), std::clamp(1.0 - l.y / size.y, 0.0, 1.0)};
+                        }
+                        im.clipped = true;
+                        im.clip_polygon = std::move(part);
+                    }
+                    make(im);
+                    continue;
+                }
+                AddInsertCommand ins;
+                ins.block = *block;
+                ins.pos = pos;
+                ins.scale_x = scale;
+                ins.scale_y = scale;
+                ins.rotation = rotation;
+                ins.group = c.group;
+                if (all_in) {
+                    make(ins);
+                    continue;
+                }
+                // Cut by the boundary: the copy's lines, cut where they leave the area.
+                InsertData probe;
+                probe.block = *block;
+                probe.pos = pos;
+                probe.scale_x = scale;
+                probe.scale_y = scale;
+                probe.rotation = rotation;
+                segs.clear();
+                resolve_insert(store_, probe, tess_tolerance_, segs);
+                for (const InsertSeg& sg : segs) {
+                    pieces.clear();
+                    clip_segment_to_loops(sg.a, sg.b, loops, pieces);
+                    for (const auto& [p, q] : pieces) {
+                        make(AddLineCommand{p, q, c.group});
+                    }
+                }
+            }
+        }
+    }
+    if (made.empty()) {
+        report("Nothing fits the area.");
+        return;
+    }
+    EntityGroup g;
+    g.name = store_.next_group_name();
+    g.description = "SUPERHATCH";
+    g.members = made;
+    store_.add_group(std::move(g));
+    selection_ = made;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Superhatch made: " + std::to_string(made.size()) + " object(s), grouped.");
+}
+
 void GeometryEngine::apply_arc_text(const ArcTextCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     const ArcData* a = h.kind == EntityKind::Arc ? store_.arc(h) : nullptr;
@@ -21571,6 +21806,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, ArcTextCommand>) {
                 apply_arc_text(c);
+            }
+            if constexpr (std::is_same_v<T, SuperHatchCommand>) {
+                apply_super_hatch(c);
             }
             if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
                 // The nearest object under the pick other than a hatch, and the island loops of

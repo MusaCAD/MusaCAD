@@ -20530,6 +20530,111 @@ void AlignSpaceUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void SuperHatchUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Enter a pattern type [Block/Wipeout/Select existing] <Block>: ");
+}
+
+void SuperHatchUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const auto point_prompt = [&] {
+        step_ = Step::Point;
+        ctx.set_prompt("Specify an internal point: ");
+    };
+    switch (step_) {
+    case Step::Type:
+        if (u == "W" || u == "WIPEOUT") {
+            cmd_.wipeout = true;
+            point_prompt();
+        } else if (u == "S" || u == "SELECT EXISTING") {
+            step_ = Step::Existing;
+            ctx.set_prompt("Select a block reference or an image: ");
+        } else if (t.empty() || u == "B" || u == "BLOCK") {
+            step_ = Step::Block;
+            ctx.set_prompt(s_block_.empty() ? std::string("Enter block name or [?]: ")
+                                            : "Enter block name or [?] <" + s_block_ + ">: ");
+        } else {
+            ctx.echo("Invalid option keyword.");
+        }
+        return;
+    case Step::Block: {
+        if (t == "?") {
+            std::string list;
+            for (const std::string& n : ctx.block_names()) {
+                if (!n.empty() && n.front() != '*') {
+                    list += (list.empty() ? "" : ", ") + n;
+                }
+            }
+            ctx.echo(list.empty() ? std::string("The drawing has no blocks.") : list);
+            return;
+        }
+        const std::string name = t.empty() ? s_block_ : t;
+        const std::vector<std::string> names = ctx.block_names();
+        const auto it = std::find_if(names.begin(), names.end(),
+                                     [&](const std::string& n) { return !name.empty() && core::same_table_name(n, name); });
+        if (it == names.end()) {
+            ctx.echo(name.empty() ? std::string("Enter a block name.") : "Block \"" + name + "\" not found.");
+            return;
+        }
+        s_block_ = *it;
+        cmd_.block = *it;
+        step_ = Step::Scale;
+        ctx.set_prompt("Specify block scale <" + fmt4(s_scale_) + ">: ");
+        return;
+    }
+    case Step::Scale: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v <= 0.0) {
+                ctx.echo("Requires a positive number.");
+                return;
+            }
+            s_scale_ = *v;
+        }
+        cmd_.scale = s_scale_;
+        step_ = Step::Rotation;
+        ctx.set_prompt("Specify rotation angle <0>: ");
+        return;
+    }
+    case Step::Rotation: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v) {
+                ctx.echo("Requires an angle in degrees.");
+                return;
+            }
+            cmd_.rotation = core::to_radians(*v);
+        }
+        point_prompt();
+        return;
+    }
+    case Step::Existing:
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.tile_pick = *p;
+            cmd_.pick_radius = ctx.pick_radius();
+            point_prompt();
+        }
+        return;
+    case Step::Point:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.at = *p;
+            cmd_.group = ctx.new_group();
+            ctx.submit(cmd_);
+        }
+        return;
+    }
+}
+
+void SuperHatchUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void ArcTextUiCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     ctx.set_prompt("Select an arc: ");

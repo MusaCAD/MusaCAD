@@ -3853,6 +3853,27 @@ private:
     static inline double s_height_ = 2.5;
 };
 
+/// SUPERHATCH (Express Tools, #77): `Enter a pattern type [Block/Wipeout/Select existing]
+/// <Block>:`; Block: `Enter block name or [?]:`, `Specify block scale <1>:`, `Specify rotation
+/// angle <0>:`; Select existing: `Select a block reference or an image:`; then `Specify an
+/// internal point:` again and again until Enter -- each area filled with copies side by side.
+class SuperHatchUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "SUPERHATCH"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Type, Block, Scale, Rotation, Existing, Point };
+    Step step_ = Step::Type;
+    core::SuperHatchCommand cmd_{};
+    bool done_ = false;
+    static inline std::string s_block_;
+    static inline double s_scale_ = 1.0;
+};
+
 /// LAYOUTMERGE (Express Tools, #77): `Enter layout name(s) to merge, separated by commas,
 /// or [*] <*>:` and `Enter destination layout name or [Current] <Current>:` -- each layout's
 /// objects onto the destination's sheet where they were, and the layout deleted.

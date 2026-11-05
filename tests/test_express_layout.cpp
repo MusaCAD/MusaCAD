@@ -4,6 +4,7 @@
 // Express Tools on layouts (#77): ALIGNSPACE, a viewport panned and scaled so points of the
 // model fall on points of the sheet; LAYOUTMERGE, layouts made one.
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -211,4 +212,59 @@ TEST_CASE("#77 ARCTEXT: the text along the arc, a character a text turned to it,
     REQUIRE(doc.groups.size() == 1);
     REQUIRE(doc.groups[0].members.size() == 2);
     engine.stop();
+}
+
+TEST_CASE("#77 SUPERHATCH: an area filled with a block's copies, cut at the boundary; or a wipeout") {
+    GeometryEngine engine;
+    engine.start();
+    // The tile: a 2 x 2 square, made a block (its reference stays far away).
+    engine.submit(AddPolylineCommand{{{100, 100}, {102, 100}, {102, 102}, {100, 102}}, true, 1});
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+    engine.submit(DefineBlockCommand{"TILE", {100, 100}, 2});
+    // The area: 5 x 5.
+    engine.submit(AddPolylineCommand{{{0, 0}, {5, 0}, {5, 5}, {0, 5}}, true, 3});
+    SuperHatchCommand c;
+    c.at = {2.5, 2.5};
+    c.block = "TILE";
+    c.group = 4;
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("Superhatch made") != std::string::npos; }));
+    io::Document doc = dump(engine, "musacad_superhatch.musa");
+    // Four whole copies (and the first reference), the rest cut to lines inside the area.
+    REQUIRE(doc.inserts.size() == 5);
+    REQUIRE_FALSE(doc.lines.empty());
+    for (const io::DocLine& l : doc.lines) {
+        for (const Vec2 p : {l.a, l.b}) {
+            REQUIRE(p.x >= -1e-9);
+            REQUIRE(p.x <= 5.0 + 1e-9);
+            REQUIRE(p.y >= -1e-9);
+            REQUIRE(p.y <= 5.0 + 1e-9);
+        }
+    }
+    REQUIRE(doc.groups.size() == 1);
+    // Wipeout.
+    SuperHatchCommand w;
+    w.at = {2.5, 2.5};
+    w.wipeout = true;
+    w.group = 5;
+    engine.submit(w);
+    doc = dump(engine, "musacad_superhatch_wipeout.musa");
+    REQUIRE(std::count_if(doc.hatches.begin(), doc.hatches.end(),
+                          [](const io::DocHatch& h) { return h.pattern_name == "WIPEOUT"; }) == 1);
+    engine.stop();
+}
+
+TEST_CASE("#77 SUPERHATCH asks for the pattern type, the block, its scale and rotation, then points") {
+    H h;
+    h.run({"SUPERHATCH"});
+    REQUIRE(h.out.prompt == "Enter a pattern type [Block/Wipeout/Select existing] <Block>: ");
+    h.run({"W", "1,1"});
+    REQUIRE(h.last<SuperHatchCommand>()->wipeout);
+    REQUIRE(h.last<SuperHatchCommand>()->at == Vec2{1, 1});
+    h.run({"", "SUPERHATCH", "S", "5,5"});
+    REQUIRE(h.out.prompt == "Specify an internal point: ");
+    h.run({"6,6", ""});
+    REQUIRE(h.last<SuperHatchCommand>()->tile_pick == std::optional<Vec2>{Vec2{5, 5}});
+    REQUIRE_FALSE(h.proc.has_active_command());
 }

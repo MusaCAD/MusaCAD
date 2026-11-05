@@ -32,6 +32,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   their blocks in a row, a column or rows of a number you give, the first's leader to them.
 - **ALIGNSPACE** (#77): two points of the model, picked through a layout viewport, and two
   points of the sheet -- the viewport panned and scaled so they fall on them.
+- **SUPERHATCH** (#77): an area filled with copies of a block side by side -- the copies the
+  boundary cuts cut there, as lines -- or of an image or block reference already in the
+  drawing (an image's copies clipped to the boundary), or with a wipeout; one group.
 - **ARCTEXT** (#77): text along an arc -- outside it reading clockwise or inside reading the
   other way, fitted to the arc or set from its start, end or middle, off it by an offset --
   each character a text turned to the arc, the characters a group.
