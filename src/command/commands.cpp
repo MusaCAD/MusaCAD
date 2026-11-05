@@ -20463,6 +20463,73 @@ void AddSelectedCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // MLEADERALIGN (issue #61)
 // ---------------------------------------------------------------------------
+void AlignSpaceUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.active_space() == 0) {
+        ctx.echo("ALIGNSPACE aligns a viewport on a layout: switch to a layout tab first.");
+        done_ = true;
+        return;
+    }
+    ctx.set_prompt("Specify first alignment point in model space: ");
+}
+
+void AlignSpaceUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const bool enter = trimmed(text).empty();
+    const auto point = [&]() -> std::optional<core::Vec2> { return read_point(ctx, text); };
+    switch (step_) {
+    case Step::Model1:
+        if (const auto p = point()) {
+            cmd_.model1 = *p;
+            ctx.set_last_point(*p);
+            step_ = Step::Model2;
+            ctx.set_prompt("Specify second alignment point in model space or <continue>: ");
+        }
+        return;
+    case Step::Model2:
+        if (!enter) {
+            const auto p = point();
+            if (!p) {
+                return;
+            }
+            cmd_.model2 = *p;
+        }
+        step_ = Step::Paper1;
+        ctx.set_prompt("Specify first alignment point in paper space: ");
+        return;
+    case Step::Paper1:
+        if (const auto p = point()) {
+            cmd_.paper1 = *p;
+            ctx.set_last_point(*p);
+            if (!cmd_.model2) {
+                cmd_.group = ctx.group_id();
+                ctx.submit(cmd_);
+                done_ = true;
+                return;
+            }
+            step_ = Step::Paper2;
+            ctx.set_prompt("Specify second alignment point in paper space or <continue>: ");
+        }
+        return;
+    case Step::Paper2:
+        if (!enter) {
+            const auto p = point();
+            if (!p) {
+                return;
+            }
+            cmd_.paper2 = *p;
+        }
+        cmd_.group = ctx.group_id();
+        ctx.submit(cmd_);
+        done_ = true;
+        return;
+    }
+}
+
+void AlignSpaceUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void MLeaderCollectCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
     if (ctx.has_selection()) {

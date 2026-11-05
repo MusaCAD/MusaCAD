@@ -3814,6 +3814,25 @@ private:
     static inline double s_spacing_ = 0.0;
 };
 
+/// ALIGNSPACE (Express Tools, #77): `Specify first alignment point in model space:` and
+/// `Specify second alignment point in model space or <continue>:` -- picked on the drawing
+/// seen through a viewport -- then `Specify first alignment point in paper space:` and the
+/// second: the viewport panned, and scaled, so the model's points fall on the sheet's.
+class AlignSpaceUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "ALIGNSPACE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Step : std::uint8_t { Model1, Model2, Paper1, Paper2 };
+    Step step_ = Step::Model1;
+    core::AlignSpaceCommand cmd_{};
+    bool done_ = false;
+};
+
 /// MLEADERCOLLECT (#61): `Select multileaders:`, then `Specify collected multileader location
 /// or [Vertical/Horizontal/Wrap] <Horizontal>:` -- the multileaders with the same block made
 /// one, their blocks in a row, a column or rows (Wrap: `Specify wrap width or [Number]:`, then

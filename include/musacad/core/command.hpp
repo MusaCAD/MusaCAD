@@ -1911,6 +1911,17 @@ struct CreateViewportCommand {
 /// "keep" values (on = -1, scale = 0, no centre) are unchanged.
 /// VPSYNC (Express Tools): the selected layout viewports take the scale of the one at
 /// `master` and are panned so the model lines up across them. One undo step.
+/// ALIGNSPACE (#77): the viewport holding `model1` (a point picked on the drawing seen
+/// through it, in paper space) panned so that point of the model falls on `paper1`, and
+/// scaled -- with the second points -- so the distance from `model1` to `model2` is the one
+/// from `paper1` to `paper2` on the sheet. One undo step.
+struct AlignSpaceCommand {
+    Vec2 model1{};
+    std::optional<Vec2> model2;
+    Vec2 paper1{};
+    std::optional<Vec2> paper2;
+    std::uint64_t group = 0;
+};
 struct VpSyncCommand {
     Vec2 master{};
     double pick_radius = 0.0;
@@ -2628,7 +2639,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
-                 AddBlockMLeaderCommand, CollectMLeadersCommand,
+                 AddBlockMLeaderCommand, CollectMLeadersCommand, AlignSpaceCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

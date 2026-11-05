@@ -30,6 +30,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   with its values, and AutoCAD's come in. EXPLODE makes block references of them.
 - **MLEADERCOLLECT** (MLC, Annotate > Leaders > Collect, #61): the selected balloons made one,
   their blocks in a row, a column or rows of a number you give, the first's leader to them.
+- **ALIGNSPACE** (#77): two points of the model, picked through a layout viewport, and two
+  points of the sheet -- the viewport panned and scaled so they fall on them.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).

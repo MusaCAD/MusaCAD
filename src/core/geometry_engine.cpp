@@ -10113,6 +10113,56 @@ void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
     report(std::to_string(renewed.size()) + (renewed.size() == 1 ? " viewport" : " viewports") + " aligned to the master.");
 }
 
+void GeometryEngine::apply_align_space(const AlignSpaceCommand& c) {
+    // The viewport whose frame holds the first point, on the layout shown.
+    EntityHandle vh = EntityHandle::null();
+    for (const EntityHandle h : all_live()) {
+        const ViewportData* v = h.kind == EntityKind::Viewport ? store_.viewport(h) : nullptr;
+        if (v != nullptr && v->props.space() == store_.active_space() && v->props.space() != 0 &&
+            std::abs(c.model1.x - v->center.x) <= v->width * 0.5 && std::abs(c.model1.y - v->center.y) <= v->height * 0.5) {
+            vh = h;
+            break;
+        }
+    }
+    if (vh.is_null()) {
+        report("Pick the first alignment point inside a viewport, on a layout.");
+        return;
+    }
+    const ViewportData v = *store_.viewport(vh);
+    const auto to_model = [&](Vec2 p) { return v.view_center + (p - v.center) / v.scale; };
+    const Vec2 m1 = to_model(c.model1);
+    double scale = v.scale;
+    std::string note;
+    if (c.model2 && c.paper2) {
+        const Vec2 dm = to_model(*c.model2) - m1;
+        const Vec2 dp = *c.paper2 - c.paper1;
+        if (length(dm) > 1e-12 && length(dp) > 1e-12) {
+            scale = length(dp) / length(dm);
+            double turn = std::atan2(dp.y, dp.x) - std::atan2(dm.y, dm.x);
+            turn = std::remainder(turn, 2.0 * kPi);
+            if (std::abs(turn) > 1e-6) {
+                note = " Viewports do not turn here: the scale and the place are aligned, not the angle.";
+            }
+        }
+    }
+    const Command original = capture_entity(vh);
+    AddViewportCommand edited = std::get<AddViewportCommand>(original);
+    edited.scale = scale;
+    edited.view_center = m1 - (c.paper1 - v.center) / scale;
+    remove_indexed(vh);
+    push_erase_item(c.group, vh, original);
+    const Command add = edited;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_.clear();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "Viewport aligned: scale %.6g.", scale);
+    report(std::string(buf) + note);
+}
+
 void GeometryEngine::apply_viewport_view(const SetViewportViewCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (store_.viewport(h) == nullptr) {
@@ -21402,6 +21452,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, CollectMLeadersCommand>) {
                 apply_collect_mleaders(c);
+            }
+            if constexpr (std::is_same_v<T, AlignSpaceCommand>) {
+                apply_align_space(c);
             }
             if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
                 // The nearest object under the pick other than a hatch, and the island loops of
