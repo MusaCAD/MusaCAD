@@ -213,6 +213,8 @@ RibbonPanel::RibbonPanel(const QString& title, QWidget* parent) : QFrame(parent)
     title_label_ = new QLabel(title, title_row_);
     title_label_->setObjectName(QStringLiteral("RibbonPanelTitle"));
     title_label_->setAlignment(Qt::AlignHCenter);
+    title_label_->installEventFilter(this); // dragging the title floats the panel
+    title_label_->setToolTip(QStringLiteral("Drag the title away to float the panel."));
     tl->addWidget(title_label_, 1);
     outer_->addWidget(title_row_);
 }
@@ -342,6 +344,7 @@ QWidget* RibbonPanel::expander() {
     title_button_->setAutoRaise(true);
     title_button_->setToolTip(QStringLiteral("More %1 tools").arg(title_));
     connect(title_button_, &QToolButton::clicked, this, [this] { toggle_expander(); });
+    title_button_->installEventFilter(this); // dragging the title floats the panel
     auto* tl = static_cast<QHBoxLayout*>(title_row_->layout());
     delete tl->replaceWidget(title_label_, title_button_); // the old item is the caller's to free
     title_label_->hide();
@@ -601,7 +604,36 @@ void RibbonPanel::toggle_popout() {
     }
 }
 
+QWidget* RibbonPanel::title_widget() const {
+    if (title_button_ != nullptr) {
+        return title_button_;
+    }
+    return title_label_;
+}
+
 bool RibbonPanel::eventFilter(QObject* watched, QEvent* event) {
+    // The title dragged away: the ribbon floats the panel (#78).
+    if (watched == title_label_ || watched == title_button_) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            const auto* me = static_cast<QMouseEvent*>(event);
+            drag_armed_ = me->button() == Qt::LeftButton;
+            drag_from_ = me->globalPosition().toPoint();
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            drag_armed_ = false;
+        } else if (event->type() == QEvent::MouseMove && drag_armed_) {
+            const auto* me = static_cast<QMouseEvent*>(event);
+            const QPoint gp = me->globalPosition().toPoint();
+            if ((me->buttons() & Qt::LeftButton) != 0 &&
+                (gp - drag_from_).manhattanLength() > QApplication::startDragDistance() * 4) {
+                drag_armed_ = false;
+                if (title_button_ != nullptr) {
+                    title_button_->setDown(false); // the release that ends the drag is no click
+                }
+                emit tear_off_requested(gp);
+                return true;
+            }
+        }
+    }
     if (event->type() == QEvent::MouseButtonPress) {
         const auto* me = static_cast<QMouseEvent*>(event);
         const QPoint gp = me->globalPosition().toPoint();
@@ -950,7 +982,86 @@ RibbonPanel* RibbonBar::add_panel(int page_index, const QString& title, int prio
     panel->set_priority(priority);
     QHBoxLayout* layout = page_layouts_.at(static_cast<std::size_t>(page_index));
     layout->insertWidget(layout->count() - 1, panel); // before the trailing stretch
+    connect(panel, &RibbonPanel::tear_off_requested, this, [this, panel](QPoint g) { float_panel(panel, g); });
     return panel;
+}
+
+bool RibbonBar::is_floating(const RibbonPanel* panel) const {
+    return std::any_of(floating_.begin(), floating_.end(), [&](const Floating& f) { return f.panel == panel; });
+}
+
+void RibbonBar::float_panel(RibbonPanel* panel, QPoint global) {
+    if (panel == nullptr || is_floating(panel)) {
+        return;
+    }
+    // Where it was, to go back there.
+    Floating f;
+    f.panel = panel;
+    for (int pi = 0; pi < static_cast<int>(page_layouts_.size()) && f.page < 0; ++pi) {
+        const int at = page_layouts_[static_cast<std::size_t>(pi)]->indexOf(panel);
+        if (at >= 0) {
+            f.page = pi;
+            f.index = at;
+        }
+    }
+    if (f.page < 0 || is_contextual_page(f.page)) {
+        return; // a contextual tab's panels act on what it is up for, and stay on it
+    }
+    page_layouts_[static_cast<std::size_t>(f.page)]->removeWidget(panel);
+    // A small window of its own, as AutoCAD floats a panel: the panel whole, and the way back.
+    auto* win = new QWidget(window(), Qt::Tool);
+    win->setObjectName(QStringLiteral("FloatingRibbonPanel"));
+    win->setWindowTitle(panel->title());
+    auto* box = new QVBoxLayout(win);
+    box->setContentsMargins(4, 4, 4, 4);
+    box->setSpacing(2);
+    panel->setParent(win);
+    panel->set_state(PanelState::Full);
+    box->addWidget(panel);
+    auto* back = new QToolButton(win);
+    back->setObjectName(QStringLiteral("FloatingRibbonPanelReturn"));
+    back->setText(QStringLiteral("Return Panels to Ribbon"));
+    back->setAutoRaise(true);
+    connect(back, &QToolButton::clicked, this, [this, panel] { dock_panel(panel); });
+    box->addWidget(back, 0, Qt::AlignRight);
+    win->installEventFilter(this);
+    f.window = win;
+    floating_.push_back(f);
+    panel->show();
+    win->adjustSize();
+    win->move(global - QPoint(win->width() / 2, 12));
+    win->show();
+    schedule_relayout(); // the page fits again without it
+}
+
+void RibbonBar::dock_panel(RibbonPanel* panel) {
+    const auto it = std::find_if(floating_.begin(), floating_.end(), [&](const Floating& f) { return f.panel == panel; });
+    if (it == floating_.end()) {
+        return;
+    }
+    const Floating f = *it;
+    floating_.erase(it);
+    QHBoxLayout* layout = page_layouts_.at(static_cast<std::size_t>(f.page));
+    panel->setParent(this);
+    layout->insertWidget(std::clamp(f.index, 0, std::max(0, layout->count() - 1)), panel); // before the stretch
+    panel->show();
+    f.window->removeEventFilter(this);
+    f.window->hide();
+    f.window->deleteLater();
+    schedule_relayout();
+}
+
+bool RibbonBar::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::Close) {
+        for (const Floating& f : floating_) {
+            if (f.window == watched) {
+                RibbonPanel* panel = f.panel;
+                QTimer::singleShot(0, this, [this, panel] { dock_panel(panel); }); // closing it docks it
+                break;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 int RibbonBar::page_of_tab(int tab_index) const {

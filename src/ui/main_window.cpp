@@ -9094,6 +9094,50 @@ bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
         }
     }
 
+    // kind 30: a floating panel (#78). Home's Draw panel dragged by its title -- press, a move
+    // well past the drag distance, release, sent as the mouse sends them -- floats in a window
+    // of its own (written next to out_png as *_float.png); Return Panels to Ribbon puts it back.
+    bool float_ok = true;
+    if (kind == 30 && ribbon_ != nullptr) {
+        RibbonPanel* draw = nullptr;
+        for (RibbonPanel* p : ribbon_->findChildren<RibbonPanel*>()) {
+            draw = draw == nullptr && p->title() == QStringLiteral("Draw") && p->isVisible() ? p : draw;
+        }
+        QWidget* title = draw != nullptr ? draw->title_widget() : nullptr;
+        float_ok = title != nullptr;
+        if (float_ok) {
+            const QPoint local(title->width() / 2, title->height() / 2);
+            const QPoint from = title->mapToGlobal(local);
+            const auto send = [&](QEvent::Type t, QPoint global, Qt::MouseButton b, Qt::MouseButtons held) {
+                QMouseEvent e(t, QPointF(title->mapFromGlobal(global)), QPointF(global), b, held, Qt::NoModifier);
+                QApplication::sendEvent(title, &e);
+            };
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseMove, from + QPoint(20, 120), Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseMove, from + QPoint(40, 260), Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, from + QPoint(40, 260), Qt::LeftButton, Qt::NoButton);
+            pump(400);
+            QWidget* win = draw->window();
+            const bool floating = ribbon_->is_floating(draw) && win != this && win->isVisible();
+            std::printf("[ribbon_shot] kind=30 floating=%d window='%s' %dx%d\n", floating ? 1 : 0,
+                        win->windowTitle().toStdString().c_str(), win->width(), win->height());
+            float_ok = floating;
+            if (floating && !out_png.empty()) {
+                QString f = QString::fromStdString(out_png);
+                f.insert(f.lastIndexOf(QLatin1Char('.')), QStringLiteral("_float"));
+                win->grab().save(f);
+            }
+            auto* back = win->findChild<QToolButton*>(QStringLiteral("FloatingRibbonPanelReturn"));
+            if (back != nullptr) {
+                back->click();
+            }
+            pump(400);
+            const bool docked = !ribbon_->is_floating(draw) && draw->window() == this && ribbon_->active_page_fits();
+            std::printf("[ribbon_shot] kind=30 docked_again=%d\n", docked ? 1 : 0);
+            float_ok = float_ok && back != nullptr && docked;
+        }
+    }
+
     // The LINE ribbon button -- used for the forced-tooltip capture (kind 1).
     auto* line_btn = findChild<QToolButton*>(QStringLiteral("ribbon.cmd.L"));
     QPoint tip_pos;
@@ -9102,7 +9146,7 @@ bool MainWindow::ribbon_shot(int kind, const std::string& out_png) {
         tip_pos = line_btn->mapToGlobal(QPoint(line_btn->width() / 2, line_btn->height()));
         tip_text = line_btn->toolTip();
     }
-    bool ok = ribbon_ != nullptr && line_btn != nullptr;
+    bool ok = ribbon_ != nullptr && line_btn != nullptr && float_ok;
     // Maximize regression guard: after the (synchronous) fitter runs, the active page must FIT its
     // viewport -- no horizontal scroll bar, so the panel titles are not clipped. This is the exact
     // first-maximize / launch-maximized failure the user reported.

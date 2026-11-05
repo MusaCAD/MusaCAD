@@ -51,6 +51,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   its landing and content, a table's title, header and cells.
 - **Extended tooltips** (#78) -- resting on a ribbon tool for a moment shows its command, the
   names it is typed as and what it does, as AutoCAD's do.
+- **Floating ribbon panels** (#78) -- drag a panel's title off the ribbon and it floats in a
+  window of its own, all its tools shown; Return Panels to Ribbon, or closing the window, puts
+  it back where it was.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).

@@ -113,14 +113,20 @@ public:
     /// icon with the title under it.
     void set_title_only(bool on);
     [[nodiscard]] const QString& title() const noexcept { return title_; }
+    /// What its title shows in: the label, or the slide-out's button once it has one.
+    [[nodiscard]] QWidget* title_widget() const;
 
     /// The panel's tool buttons in the order they were added: those on the panel itself, or
     /// (`slideout`) those on its slide-out. Read by `musacad --dump-wiki-data`, which records
     /// where each command sits on the ribbon.
     [[nodiscard]] std::vector<QToolButton*> tool_buttons(bool slideout = false) const;
 
+signals:
+    /// The panel's title was dragged off the ribbon (#78): float it, under `global`.
+    void tear_off_requested(QPoint global);
+
 protected:
-    bool eventFilter(QObject* watched, QEvent* event) override; // click-outside dismiss
+    bool eventFilter(QObject* watched, QEvent* event) override; // click-outside dismiss, title drag
 
 private:
     QToolButton* make_button(const QIcon& icon, const QString& label, bool enabled,
@@ -162,6 +168,8 @@ private:
     QToolButton* flyout_btn_ = nullptr;
     QFrame* popout_ = nullptr;
     bool filter_on_ = false; // is this panel currently a qApp event filter? (popout open)
+    QPoint drag_from_;        // a press on the title, where (a drag from it floats the panel)
+    bool drag_armed_ = false;
 };
 
 /// AutoCAD-style ribbon: a Quick Access Toolbar strip on top, a row of tabs, and a stacked
@@ -212,6 +220,12 @@ public:
     /// guarantee this except on a genuinely too-narrow window where even all-collapsed overflows.
     [[nodiscard]] bool active_page_fits() const;
 
+    /// Floating panels (#78): `panel` off the ribbon in a window of its own at `global`, or back
+    /// where it was. A panel is floated by dragging its title away.
+    void float_panel(RibbonPanel* panel, QPoint global);
+    void dock_panel(RibbonPanel* panel);
+    [[nodiscard]] bool is_floating(const RibbonPanel* panel) const;
+
     /// A tab and its panels, left to right.
     struct TabStructure {
         QString title;
@@ -224,6 +238,7 @@ public:
 protected:
     void resizeEvent(QResizeEvent* e) override;
     void showEvent(QShowEvent* e) override;
+    bool eventFilter(QObject* watched, QEvent* event) override; // a floating panel's window closed
 
 private:
     int create_page();                                       // page widget + scroll; -> index
@@ -267,6 +282,13 @@ private:
     int fit_generation_ = 0;         // bumped per relayout; gates the one-shot ground-truth re-check
     bool in_fit_ = false;            // re-entrancy latch: an activate()-induced resize must not re-enter
     bool did_recheck_ = false;       // one-shot ground-truth re-check fired this request (reset on a new one)
+    struct Floating {
+        RibbonPanel* panel = nullptr;
+        int page = -1;
+        int index = 0; ///< where it was in its page
+        QWidget* window = nullptr;
+    };
+    std::vector<Floating> floating_;
 };
 
 } // namespace musacad::ui
