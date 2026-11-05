@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "musacad/core/drawing_props.hpp"
+#include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/layout.hpp"
@@ -89,6 +90,25 @@ struct DocGroup {
     bool selectable = true;
     std::vector<std::pair<std::uint8_t, std::uint32_t>> members;
     friend bool operator==(const DocGroup&, const DocGroup&) = default;
+};
+/// DXF only (#59): a point of an associative dimension on an object, as AutoCAD's DIMASSOC
+/// object names it. The engine lists them when it writes DXF, from the objects the
+/// dimensions' points are on; they are not kept in the drawing file, where a dimension
+/// follows whatever its points are on. `point` is AutoCAD's number for the dimension's
+/// point (a linear one's extension lines 0 and 1, a radial one's centre 1, an angular one's
+/// rays 0 and 1 and vertex 2, an ordinate one's feature 1); `osnap` the object snap that
+/// finds it (1 endpoint, 2 midpoint, 3 centre, 4 node, 10 nearest, 13 start); `segment` a
+/// polyline's segment, from 1 (0 for the other objects); `param` where the point is on the
+/// object (along a line 0 to 1, round an arc or circle its angle).
+struct DocDimRef {
+    std::uint32_t dim = 0;   ///< the dimension's index in Document::dims
+    std::uint8_t point = 0;
+    std::uint8_t kind = 0;   ///< the object's EntityKind
+    std::uint32_t index = 0; ///< the object's index among its kind
+    std::uint8_t osnap = 0;
+    std::uint32_t segment = 0;
+    double param = 0.0;
+    friend bool operator==(const DocDimRef&, const DocDimRef&) = default;
 };
 /// An ellipse / elliptical arc (v22): centre, major half-axis, ratio, parameter range.
 struct DocEllipse {
@@ -461,6 +481,7 @@ struct Document {
     int vports_active = 0;
     std::vector<VportConfig> saved_vports; ///< VPORTS Save         ///< named views (v24; not in entity_count)
     std::vector<DocGroup> groups;         ///< groups (v24; members by kind + order; not in entity_count)
+    std::vector<DocDimRef> dim_refs;      ///< DXF only: written as DIMASSOC objects (#59)
 
     std::vector<DocPoint> points;
     std::vector<DocXline> xlines;        ///< construction lines (v21)
@@ -553,6 +574,10 @@ void for_each_entity_props(Doc& doc, Fn&& fn) {
 }
 
 [[nodiscard]] Document document_from_store(const GeometryStore& store);
+
+/// Where entity `h` is in the Document document_from_store makes of `store`: its index
+/// among the entities of its kind.
+[[nodiscard]] std::uint32_t document_index(const GeometryStore& store, EntityHandle h);
 
 /// Adds all of a Document's entities to a store. The caller is responsible for
 /// clearing the store first (and rebuilding any spatial index afterwards).

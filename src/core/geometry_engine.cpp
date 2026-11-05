@@ -2158,6 +2158,209 @@ GeometryEngine::Followers GeometryEngine::collect_followers(
     return out;
 }
 
+namespace {
+/// How AutoCAD's DIMASSOC names point `p` on object `h` (#59): the object snap that finds it,
+/// a polyline's segment and the point's parameter -- or nothing when `p` is not on it in a way
+/// a DIMASSOC says. `centre` asks for the object's centre only (a radial dimension's).
+std::optional<io::DocDimRef> dim_ref_on(const GeometryStore& store, EntityHandle h, Vec2 p, bool centre) {
+    const double tol = assoc_tol(p);
+    const auto at = [&](Vec2 q) { return distance(p, q) <= tol; };
+    io::DocDimRef r;
+    r.kind = static_cast<std::uint8_t>(h.kind);
+    const auto snap = [&](std::uint8_t osnap, double param, std::uint32_t segment = 0) {
+        r.osnap = osnap;
+        r.param = param;
+        r.segment = segment;
+        return std::optional<io::DocDimRef>(r);
+    };
+    // A point on a circle of centre c and radius rad, round from angle a0 through `sweep`.
+    const auto on_round = [&](Vec2 c, double rad, double a0, double sweep) -> std::optional<double> {
+        if (std::abs(distance(p, c) - rad) > tol) {
+            return std::nullopt;
+        }
+        const double ang = std::atan2(p.y - c.y, p.x - c.x);
+        double off = std::fmod(ang - a0, 2.0 * kPi);
+        if (off < 0.0) {
+            off += 2.0 * kPi;
+        }
+        if (off > sweep + tol / std::max(rad, 1e-12)) {
+            return std::nullopt;
+        }
+        return a0 + off;
+    };
+    switch (h.kind) {
+    case EntityKind::Point:
+        if (!centre && at(store.points().data()[h.index].p)) {
+            return snap(4, 0.0);
+        }
+        return std::nullopt;
+    case EntityKind::Line: {
+        if (centre) {
+            return std::nullopt;
+        }
+        const LineData& l = store.lines().data()[h.index];
+        if (at(l.a)) {
+            return snap(13, 0.0);
+        }
+        if (at(l.b)) {
+            return snap(1, 1.0);
+        }
+        if (at((l.a + l.b) * 0.5)) {
+            return snap(2, 0.5);
+        }
+        const Vec2 d = l.b - l.a;
+        const double len2 = dot(d, d);
+        const double t = len2 > 0.0 ? std::clamp(dot(p - l.a, d) / len2, 0.0, 1.0) : 0.0;
+        if (at(l.a + d * t)) {
+            return snap(10, t);
+        }
+        return std::nullopt;
+    }
+    case EntityKind::Circle: {
+        const CircleData& c = store.circles().data()[h.index];
+        if (at(c.center)) {
+            return snap(3, 0.0);
+        }
+        if (centre) {
+            return std::nullopt;
+        }
+        if (const std::optional<double> a = on_round(c.center, c.radius, 0.0, 2.0 * kPi)) {
+            return snap(10, *a);
+        }
+        return std::nullopt;
+    }
+    case EntityKind::Arc: {
+        const ArcData& a = store.arcs().data()[h.index];
+        if (at(a.center)) {
+            return snap(3, 0.0);
+        }
+        if (centre) {
+            return std::nullopt;
+        }
+        const Vec2 s0 = a.center + Vec2{std::cos(a.start_angle), std::sin(a.start_angle)} * a.radius;
+        const Vec2 s1 = a.center + Vec2{std::cos(a.end_angle), std::sin(a.end_angle)} * a.radius;
+        if (at(s0)) {
+            return snap(13, a.start_angle);
+        }
+        if (at(s1)) {
+            return snap(1, a.end_angle);
+        }
+        double sweep = std::fmod(a.end_angle - a.start_angle, 2.0 * kPi);
+        if (sweep <= 0.0) {
+            sweep += 2.0 * kPi;
+        }
+        if (const std::optional<double> ang = on_round(a.center, a.radius, a.start_angle, sweep)) {
+            return snap(10, *ang);
+        }
+        return std::nullopt;
+    }
+    case EntityKind::Polyline: {
+        // A vertex, as AutoCAD names it: the end of the segment that comes to it (the closing
+        // one at a closed polyline's first vertex), the start of the first at an open one's.
+        const PolylineData& pl = store.polylines().data()[h.index];
+        if (centre || pl.fit != 0) {
+            return std::nullopt; // a fitted polyline is drawn through other points
+        }
+        const std::span<const Vec2> v = store.vertices_of(pl);
+        const auto n = static_cast<std::uint32_t>(v.size());
+        for (std::uint32_t i = 0; i < n; ++i) {
+            if (!at(v[i])) {
+                continue;
+            }
+            if (i == 0) {
+                return pl.closed ? snap(1, 1.0, n) : snap(13, 0.0, 1);
+            }
+            return snap(1, 1.0, i);
+        }
+        return std::nullopt;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+} // namespace
+
+std::vector<io::DocDimRef> GeometryEngine::dim_refs_for_dxf() const {
+    std::vector<io::DocDimRef> out;
+    std::vector<EntityHandle> cand;
+    const auto& dims = store_.dimensions();
+    std::uint32_t doc_index = 0; // the dimension's place in the Document: live ones in slot order
+    for (std::uint32_t i = 0; i < dims.slot_count(); ++i) {
+        if (!dims.alive(i)) {
+            continue;
+        }
+        const std::uint32_t di = doc_index++;
+        const DimData& d = dims.data()[i];
+        if (d.unassoc) {
+            continue;
+        }
+        // AutoCAD's numbers for the points, and where each is (`look` is where to find the
+        // object: a radial dimension's centre is found from the circle its point b is on).
+        struct Want {
+            std::uint8_t point;
+            Vec2 p;
+            Vec2 look;
+            bool centre;
+        };
+        std::vector<Want> want;
+        switch (d.type) {
+        case DimType::Linear:
+        case DimType::Aligned:
+            want = {{0, d.a, d.a, false}, {1, d.b, d.b, false}};
+            break;
+        case DimType::Radius:
+        case DimType::Diameter:
+        case DimType::Jogged:
+            want = {{1, d.a, d.b, true}};
+            break;
+        case DimType::Angular: // written as AutoCAD's three-point angular: 13, 14, then 15
+            want = {{0, d.b, d.b, false}, {1, d.line_pt, d.line_pt, false}, {2, d.a, d.a, false}};
+            break;
+        case DimType::Ordinate:
+            want = {{1, d.a, d.a, false}};
+            break;
+        default:
+            break; // an arc length's association has no DIMASSOC form here
+        }
+        for (const Want& w : want) {
+            const double tol = assoc_tol(w.look);
+            cand.clear();
+            grid_.query({w.look.x - tol, w.look.y - tol}, {w.look.x + tol, w.look.y + tol}, cand);
+            std::optional<io::DocDimRef> best;
+            for (const EntityHandle c : cand) {
+                if (!assoc_target(c.kind) || !store_.is_valid(c)) {
+                    continue;
+                }
+                const EntityProps* cp = store_.props(c);
+                if (cp == nullptr || cp->space() != d.props.space()) {
+                    continue;
+                }
+                if (w.centre && distance(w.look, w.p) > tol) {
+                    // b must be on the circle whose centre the dimension measures from
+                    Vec2 q;
+                    if (!kernel_.closest_point(store_, c, w.look, q) || distance(q, w.look) > tol) {
+                        continue;
+                    }
+                }
+                std::optional<io::DocDimRef> r = dim_ref_on(store_, c, w.p, w.centre);
+                if (!r) {
+                    continue;
+                }
+                r->index = io::document_index(store_, c);
+                if (!best || (best->osnap == 10 && r->osnap != 10)) {
+                    best = r; // a key point (an end, the middle, the centre) before "nearest"
+                }
+            }
+            if (best) {
+                best->dim = di;
+                best->point = w.point;
+                out.push_back(*best);
+            }
+        }
+    }
+    return out;
+}
+
 GeometryEngine::Followers GeometryEngine::followers_on(const std::vector<EntityHandle>& edited) const {
     std::unordered_set<std::uint64_t> in_edit;
     bool targets = false;
@@ -18822,7 +19025,10 @@ void GeometryEngine::apply_one(const Command& command) {
                     t.updated = now_epoch();
                     store_.set_times(t);
                 }
-                const io::Document doc = io::document_from_store(store_);
+                io::Document doc = io::document_from_store(store_);
+                if (c.dxf) {
+                    doc.dim_refs = dim_refs_for_dxf(); // AutoCAD's DIMASSOC objects (#59)
+                }
                 const io::IoResult r =
                     c.dxf ? io::save_dxf(doc, c.path) : io::save_native(doc, c.path);
                 if (r.ok) {

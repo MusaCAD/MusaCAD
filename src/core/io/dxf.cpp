@@ -27,6 +27,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "musacad/core/math/math.hpp"
@@ -457,6 +458,9 @@ void emit_header(std::string& s, const Document& doc, std::uint64_t handseed) {
     code_i("$PDMODE", doc.pdmode);
     code(s, 9, "$PDSIZE");
     code_d(s, 40, doc.pdsize);
+    // DIMASSOC 2: the dimensions a DIMASSOC object names are associative, the others not (#59).
+    code(s, 9, "$DIMASSOC");
+    code(s, 280, "2");
     code(s, 9, "$INSBASE");
     code_d(s, 10, doc.insbase.x);
     code_d(s, 20, doc.insbase.y);
@@ -481,7 +485,7 @@ bool has_wipeouts(const Document& doc) {
 // IMAGEDEF_REACTOR, WIPEOUT and WIPEOUTVARIABLES only when the CLASSES section declares them).
 void emit_classes(std::string& s, const Document& doc) {
     const bool wipeouts = has_wipeouts(doc);
-    if (doc.images.empty() && !wipeouts) {
+    if (doc.images.empty() && !wipeouts && doc.dim_refs.empty()) {
         return;
     }
     code(s, 0, "SECTION");
@@ -490,8 +494,11 @@ void emit_classes(std::string& s, const Document& doc) {
         code(s, 0, "CLASS");
         code(s, 1, name);
         code(s, 2, cpp);
-        code(s, 3, std::string_view(name).starts_with("WIPEOUT") ? "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com"
-                                                                   : "ISM");
+        const std::string_view n(name);
+        code(s, 3, n.starts_with("WIPEOUT")  ? "WipeOut|AutoCAD Express Tool|expresstools@autodesk.com"
+                   : n == "DIMASSOC"         ? "AcDbDimAssoc|Product Desc:     AcDim ARX App For Dimension|"
+                                               "Company:          Autodesk, Inc.|WEB Address:      www.autodesk.com"
+                                             : "ISM");
         code_i(s, 90, flags);
         code_i(s, 280, 0);
         code_i(s, 281, is_entity);
@@ -504,6 +511,9 @@ void emit_classes(std::string& s, const Document& doc) {
     if (wipeouts) {
         cls("WIPEOUT", "AcDbWipeout", 127, 1);
         cls("WIPEOUTVARIABLES", "AcDbWipeoutVariables", 0, 0);
+    }
+    if (!doc.dim_refs.empty()) {
+        cls("DIMASSOC", "AcDbDimAssoc", 0, 0);
     }
     code(s, 0, "ENDSEC");
 }
@@ -783,6 +793,21 @@ struct WriterRefs {
     std::vector<std::uint64_t> def_handles;
     std::vector<std::uint64_t> mlstyle_handles; ///< MLINESTYLE handles by style index
     std::vector<std::pair<std::uint64_t, std::uint64_t>> reactors; ///< (image, reactor)
+    /// A dimension's DIMASSOC object (#59): its extension dictionary and itself, their handles
+    /// given before the entities so the objects it names can carry it as a reactor; the
+    /// dimension's handle, and the references with their objects' handles, as written.
+    struct DimAssoc {
+        std::uint32_t dim = 0;
+        std::uint64_t dict = 0;
+        std::uint64_t assoc = 0;
+        std::uint64_t dim_handle = 0;
+        std::vector<const DocDimRef*> refs;
+        std::vector<std::uint64_t> objects;
+    };
+    std::vector<DimAssoc> dim_assocs;
+    std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> reactors_on; ///< object key -> DIMASSOCs
+    std::unordered_map<std::uint32_t, std::size_t> assoc_of_dim;               ///< dimension -> dim_assocs
+    std::unordered_map<std::uint64_t, std::uint64_t> handle_of;                ///< object key -> its handle
     std::size_t entities_begin = 0;
     std::size_t blocks_begin = 0;
     std::size_t blocks_end = 0;
@@ -802,13 +827,77 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         refs.mlstyle_handles.push_back(g_handle++);
     }
 
+    // The DIMASSOC objects (#59), one per dimension with points on objects. A polyline the
+    // file writes as a heavy POLYLINE (a fitted one) is not named: its vertices are other
+    // records. A key is an object's (kind, index).
+    const auto key_of = [](EntityKind k, std::size_t i) {
+        return (static_cast<std::uint64_t>(k) << 32) | static_cast<std::uint64_t>(i);
+    };
+    refs.dim_assocs.clear();
+    refs.reactors_on.clear();
+    refs.assoc_of_dim.clear();
+    refs.handle_of.clear();
+    for (const DocDimRef& r : doc.dim_refs) {
+        if (r.dim >= doc.dims.size()) {
+            continue;
+        }
+        if (static_cast<EntityKind>(r.kind) == EntityKind::Polyline) {
+            if (r.index >= doc.polylines.size()) {
+                continue;
+            }
+            const DocPolyline& p = doc.polylines[r.index];
+            if ((p.fit != 0 && p.frame.size() >= 2) || !p.tangents.empty()) {
+                continue;
+            }
+        }
+        auto [it, fresh] = refs.assoc_of_dim.try_emplace(r.dim, refs.dim_assocs.size());
+        if (fresh) {
+            WriterRefs::DimAssoc a;
+            a.dim = r.dim;
+            a.dict = g_handle++;
+            a.assoc = g_handle++;
+            refs.dim_assocs.push_back(std::move(a));
+        }
+        WriterRefs::DimAssoc& a = refs.dim_assocs[it->second];
+        a.refs.push_back(&r);
+        std::vector<std::uint64_t>& on = refs.reactors_on[key_of(static_cast<EntityKind>(r.kind), r.index)];
+        if (std::find(on.begin(), on.end(), a.assoc) == on.end()) {
+            on.push_back(a.assoc);
+        }
+    }
+    // An entity's handle, then the DIMASSOC objects it is measured by (its reactors) or, for a
+    // dimension, the dictionary that holds its DIMASSOC, then its properties.
+    const auto emit_props_at = [&](EntityKind kind, std::size_t index, const EntityProps& props) {
+        const std::uint64_t key = key_of(kind, index);
+        const auto on = refs.reactors_on.find(key);
+        const auto own = kind == EntityKind::Dimension ? refs.assoc_of_dim.find(static_cast<std::uint32_t>(index))
+                                                       : refs.assoc_of_dim.end();
+        const std::uint64_t h = emit_handle(s);
+        if (on != refs.reactors_on.end()) {
+            refs.handle_of[key] = h;
+            code(s, 102, "{ACAD_REACTORS");
+            for (const std::uint64_t a : on->second) {
+                code(s, 330, handle_hex(a));
+            }
+            code(s, 102, "}");
+        }
+        if (own != refs.assoc_of_dim.end()) {
+            WriterRefs::DimAssoc& a = refs.dim_assocs[own->second];
+            a.dim_handle = h;
+            code(s, 102, "{ACAD_XDICTIONARY");
+            code(s, 360, handle_hex(a.dict));
+            code(s, 102, "}");
+        }
+        emit_props_body(s, doc, props);
+    };
+
     refs.entities_begin = s.size();
     code(s, 0, "SECTION");
     code(s, 2, "ENTITIES");
 
     for (const DocPoint& p : doc.points) {
         code(s, 0, "POINT");
-        emit_props(s, doc, p.props);
+        emit_props_at(EntityKind::Point, static_cast<std::size_t>(&p - doc.points.data()), p.props);
         code_d(s, 10, p.p.x);
         code_d(s, 20, p.p.y);
         code_d(s, 30, 0.0);
@@ -954,7 +1043,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     }
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
-        emit_props(s, doc, l.props);
+        emit_props_at(EntityKind::Line, static_cast<std::size_t>(&l - doc.lines.data()), l.props);
         if (l.celtscale != 1.0) {
             code_d(s, 48, l.celtscale); // per-entity linetype scale (CELTSCALE)
         }
@@ -967,7 +1056,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     }
     for (const DocCircle& c : doc.circles) {
         code(s, 0, "CIRCLE");
-        emit_props(s, doc, c.props);
+        emit_props_at(EntityKind::Circle, static_cast<std::size_t>(&c - doc.circles.data()), c.props);
         if (c.celtscale != 1.0) {
             code_d(s, 48, c.celtscale);
         }
@@ -978,7 +1067,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     }
     for (const DocArc& a : doc.arcs) {
         code(s, 0, "ARC");
-        emit_props(s, doc, a.props);
+        emit_props_at(EntityKind::Arc, static_cast<std::size_t>(&a - doc.arcs.data()), a.props);
         if (a.celtscale != 1.0) {
             code_d(s, 48, a.celtscale);
         }
@@ -1065,7 +1154,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             continue;
         }
         code(s, 0, "LWPOLYLINE");
-        emit_props(s, doc, p.props);
+        emit_props_at(EntityKind::Polyline, static_cast<std::size_t>(&p - doc.polylines.data()), p.props);
         if (p.celtscale != 1.0) {
             code_d(s, 48, p.celtscale);
         }
@@ -1112,7 +1201,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const std::string style =
             d.style < doc.dimstyles.size() ? doc.dimstyles[d.style].name : std::string("Standard");
         code(s, 0, "DIMENSION");
-        emit_props(s, doc, d.props);
+        emit_props_at(EntityKind::Dimension, static_cast<std::size_t>(&d - doc.dims.data()), d.props);
         code(s, 2, "*D0"); // anonymous block name (graphics regenerated by readers)
         code(s, 3, style);
         const auto kind = static_cast<DimType>(d.type);
@@ -1790,7 +1879,7 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     const bool images = !(doc.images.empty() && doc.image_defs.empty());
     const bool mlines = !doc.mlines.empty() || !(doc.mline_styles.size() == 1 && doc.mline_styles[0] == MLineStyle{});
     const bool wipeouts = has_wipeouts(doc);
-    if (!images && !mlines && !wipeouts) {
+    if (!images && !mlines && !wipeouts && refs.dim_assocs.empty()) {
         return;
     }
     // The named object dictionary, its ACAD_IMAGE_DICT, one IMAGEDEF per definition
@@ -1857,6 +1946,58 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
         code(s, 330, handle_hex(kRootDictHandle));
         code(s, 100, "AcDbWipeoutVariables");
         code_i(s, 70, !doc.wipeout_frames ? 0 : doc.wipeout_frames_plot ? 1 : 2);
+    }
+    // DIMASSOC (#59): the dimension's extension dictionary holds it as ACAD_DIMASSOC. It names
+    // the dimension, which of its points are on objects (90, a bit each), and for each such
+    // point the object (331), the object snap that finds it (72), a polyline's segment (91)
+    // and where on the object it is (40), as AutoCAD writes them.
+    for (const WriterRefs::DimAssoc& a : refs.dim_assocs) {
+        std::vector<std::pair<const DocDimRef*, std::uint64_t>> on;
+        for (const DocDimRef* r : a.refs) {
+            const auto h = refs.handle_of.find((static_cast<std::uint64_t>(r->kind) << 32) | r->index);
+            if (h != refs.handle_of.end() && r->point < 4) {
+                on.emplace_back(r, h->second);
+            }
+        }
+        std::sort(on.begin(), on.end(), [](const auto& x, const auto& y) { return x.first->point < y.first->point; });
+        on.erase(std::unique(on.begin(), on.end(),
+                             [](const auto& x, const auto& y) { return x.first->point == y.first->point; }),
+                 on.end());
+        long flags = 0;
+        for (const auto& [r, h] : on) {
+            flags |= 1L << r->point;
+        }
+        code(s, 0, "DICTIONARY");
+        code(s, 5, handle_hex(a.dict));
+        code(s, 330, handle_hex(a.dim_handle));
+        code(s, 100, "AcDbDictionary");
+        code_i(s, 280, 1);
+        code_i(s, 281, 1);
+        code(s, 3, "ACAD_DIMASSOC");
+        code(s, 360, handle_hex(a.assoc));
+        code(s, 0, "DIMASSOC");
+        code(s, 5, handle_hex(a.assoc));
+        code(s, 102, "{ACAD_REACTORS");
+        code(s, 330, handle_hex(a.dict));
+        code(s, 102, "}");
+        code(s, 330, handle_hex(a.dict));
+        code(s, 100, "AcDbDimAssoc");
+        code(s, 330, handle_hex(a.dim_handle));
+        code_i(s, 90, flags);
+        code_i(s, 70, 0); // the dimension and its objects in the same space
+        code_i(s, 71, 0);
+        for (const auto& [r, h] : on) {
+            code(s, 1, "AcDbOsnapPointRef");
+            code_i(s, 72, r->osnap);
+            code(s, 331, handle_hex(h));
+            code_i(s, 73, static_cast<EntityKind>(r->kind) == EntityKind::Point ? 0 : 2); // an edge
+            code_i(s, 91, static_cast<long>(r->segment));
+            code_d(s, 40, r->param);
+            code_d(s, 10, 0.0); // no last point: the object snap finds it
+            code_d(s, 20, 0.0);
+            code_d(s, 30, 2.0e50);
+            code_i(s, 75, 0);
+        }
     }
     if (!images) {
         code(s, 0, "ENDSEC");
@@ -2387,6 +2528,12 @@ IoResult parse_dxf(const std::string& text, Document& out) {
 
     // LAYER handle -> index, for VIEWPORT 331 (layers frozen in that viewport).
     std::map<std::string, std::uint16_t> layer_by_handle;
+    // DIMASSOC (#59): in a file that has $DIMASSOC, as AutoCAD writes it, a dimension is
+    // associative when a DIMASSOC object names it, and not otherwise. A file without (one an
+    // older Musa CAD wrote) leaves its dimensions following what their points are on.
+    std::map<std::string, std::size_t> dim_by_handle; // the drawing's dimensions by handle
+    std::set<std::string> associated;                 // those a DIMASSOC object names
+    bool dimassoc_var = false;
     const auto upper_hex = [](std::string h) {
         for (char& ch : h) {
             ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -3171,6 +3318,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 const double cs = std::cos(base.layout_rotation);
                 const double sn = std::sin(base.layout_rotation);
                 d.text_offset = {delta.x * cs + delta.y * sn, -delta.x * sn + delta.y * cs};
+            }
+            if (const std::string* h = find(body, 5)) {
+                dim_by_handle[upper_hex(*h)] = sink.dims->size();
             }
             sink.dims->push_back(std::move(d));
             return;
@@ -4097,7 +4247,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             DrawingUnits& du = doc.display_units;
             const auto whole = [&](long lo, long hi) { return std::clamp(to_l(q.value), lo, hi); };
             bool took = true;
-            if (var == "$CMLJUST" && q.code == 70) {
+            if (var == "$DIMASSOC") {
+                dimassoc_var = true;
+            } else if (var == "$CMLJUST" && q.code == 70) {
                 doc.cmljust = static_cast<std::uint8_t>(whole(0, 2));
             } else if (var == "$CMLSCALE" && q.code == 40) {
                 doc.cmlscale = to_d(q.value);
@@ -4224,6 +4376,26 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             while (i < n && pairs[i].code != 0) {
                 body.push_back(pairs[i]);
                 ++i;
+            }
+            if (type == "DIMASSOC") {
+                // The dimension (the 330 after the subclass marker) and which of its points are
+                // on objects (90); none means it is not associated.
+                bool sub = false;
+                const std::string* dim = nullptr;
+                long flags = 0;
+                for (const Pair& q : body) {
+                    if (q.code == 100) {
+                        sub = true;
+                    } else if (q.code == 330 && sub && dim == nullptr) {
+                        dim = &q.value;
+                    } else if (q.code == 90) {
+                        flags = to_l(q.value);
+                    }
+                }
+                if (dim != nullptr && flags != 0) {
+                    associated.insert(upper_hex(*dim));
+                }
+                continue;
             }
             if (type == "MLINESTYLE") {
                 // Its name, flags, description, fill colour and end angles, then per element an
@@ -4552,6 +4724,13 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
         }
         doc.images.push_back(std::move(im));
+    }
+    if (dimassoc_var) {
+        for (const auto& [h, k] : dim_by_handle) {
+            if (k < doc.dims.size() && !associated.contains(h)) {
+                doc.dims[k].unassoc = true;
+            }
+        }
     }
     for (std::size_t k = 0; k < doc.dimstyles.size(); ++k) {
         if (!current_dimstyle_name.empty() && doc.dimstyles[k].name == current_dimstyle_name) {

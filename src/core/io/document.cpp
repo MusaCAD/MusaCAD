@@ -174,6 +174,8 @@ std::vector<EntityHandle> handles_of_kind(const GeometryStore& store, EntityKind
 }
 } // namespace
 
+std::uint32_t document_index(const GeometryStore& store, EntityHandle h) { return doc_index_of(store, h); }
+
 Document document_from_store(const GeometryStore& store) {
     Document doc;
     doc.layers.assign(store.layers().begin(), store.layers().end());

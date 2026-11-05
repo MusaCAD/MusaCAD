@@ -208,6 +208,7 @@ set(_musacad_test_files
     test_dxf_image.cpp
     test_dxf_dimensions.cpp
     test_block_hatches.cpp
+    test_dxf_dimassoc.cpp
     test_external_files.cpp
     test_update_channel.cpp
     test_fonts.cpp

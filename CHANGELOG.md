@@ -14,6 +14,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   them in (445 of them in one production drawing), SOLID inside a block is filled, and
   BLOCK, EXPLODE, REFEDIT, WBLOCK and copying between drawings carry them. Saved in the
   drawing (format v46) and in DXF.
+- **Dimension association in DXF** (#59). A DXF saved from Musa CAD names, for each
+  associative dimension, the objects its points are on -- a line's end or middle, a
+  polyline's vertex, a circle's or arc's centre -- as AutoCAD's DIMASSOC objects do, so the
+  dimensions stay associative in AutoCAD and when the file is opened again. Opening an AutoCAD
+  drawing, the dimensions it has associated follow their objects and the others do not, as
+  there.
 - **Ctrl+1** opens and closes the Properties palette, as in AutoCAD.
 - **CHAMMODE** and **OFFSETDIST** as system variables (CHAMFER's method; the distance OFFSET
   offers, negative for Through).

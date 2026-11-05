@@ -31,6 +31,10 @@
 
 namespace musacad::core {
 
+namespace io {
+struct DocDimRef;
+} // namespace io
+
 class IFontEngine;
 
 /// Owns the geometry thread and everything it owns: the SoA GeometryStore, the
@@ -517,6 +521,9 @@ private:
     };
     /// The associative dimensions and hatches, not among `edited`, with points on `edited`.
     [[nodiscard]] Followers followers_on(const std::vector<EntityHandle>& edited) const;
+    /// DXF (#59): the objects the associative dimensions' points are on, as AutoCAD's
+    /// DIMASSOC objects name them.
+    [[nodiscard]] std::vector<io::DocDimRef> dim_refs_for_dxf() const;
     /// Those not `skip`ped with points in [lo, hi] that `follows` says go along.
     [[nodiscard]] Followers collect_followers(const std::function<bool(EntityHandle)>& skip, Vec2 lo, Vec2 hi,
                                               const std::function<bool(Vec2, std::uint8_t)>& follows) const;
