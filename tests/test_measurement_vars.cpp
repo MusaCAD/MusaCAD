@@ -98,8 +98,8 @@ void square(GeometryEngine& engine, Vec2 lo, double side, std::uint64_t group) {
 TEST_CASE("The linetype library as acad.lin and acadiso.lin have it, and the built-in three a drawing keeps") {
     const std::vector<LinetypeDef>& inch = linetype_library(false);
     const std::vector<LinetypeDef>& mm = linetype_library(true);
-    REQUIRE(inch.size() == 38);
-    REQUIRE(mm.size() == 38);
+    REQUIRE(inch.size() == 40);
+    REQUIRE(mm.size() == 40);
     const auto find = [](const std::vector<LinetypeDef>& lib, const char* name) {
         for (const LinetypeDef& d : lib) {
             if (d.name == name) {

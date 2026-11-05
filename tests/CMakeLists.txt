@@ -232,6 +232,7 @@ set(_musacad_test_files
     test_pedit_vertex.cpp
     test_dwgunits.cpp
     test_measurement_vars.cpp
+    test_linetype_text.cpp
     test_attach_scale.cpp
     test_dimtext_grips_dyn.cpp
     test_mline.cpp

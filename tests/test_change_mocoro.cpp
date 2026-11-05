@@ -3961,7 +3961,7 @@ TEST_CASE("Linetypes loaded from .lin files and AutoCAD drawings: drawn, listed,
     REQUIRE(lin[0].description == "Dash dot (.5x) _._._");
     REQUIRE(lin[0].pattern == std::vector<double>{0.25, -0.125, 0.0, -0.125});
     REQUIRE(lin[1].pattern == std::vector<double>{0.5, -0.2, -0.25});
-    REQUIRE(linetype_library(false).size() == 38); // eight linetypes in three sizes, and the 14 ISO ones
+    REQUIRE(linetype_library(false).size() == 40); // eight linetypes in three sizes, the 14 ISO ones and two with text
 
     // Drawn by its own pattern: a dash, a gap, a dot, a gap ...
     const std::vector<Vec2> line{{0, 0}, {10, 0}};

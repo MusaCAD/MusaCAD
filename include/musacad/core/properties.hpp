@@ -32,14 +32,33 @@ enum class Linetype : std::uint8_t {
     Hidden = 3,
 };
 
+/// Text a complex linetype draws in its pattern (#68), as acad.lin's GAS_LINE has it:
+/// `["GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05]`. It sits where pattern element `after - 1`
+/// ends (0: where the pattern starts), moved `x` along the line and `y` across it, `scale`
+/// high, turned `rotation` from the line -- or from the x axis, `absolute` -- and, `upright`,
+/// turned round where it would read upside down. All lengths are scaled with the pattern.
+struct LinetypeText {
+    std::uint32_t after = 0;
+    std::string text;
+    std::string style = "STANDARD";
+    double scale = 1.0;
+    double rotation = 0.0; ///< radians
+    bool absolute = false;
+    bool upright = false;
+    double x = 0.0;
+    double y = 0.0;
+    friend bool operator==(const LinetypeText&, const LinetypeText&) = default;
+};
+
 /// A linetype loaded into the drawing (-LINETYPE Load, the Linetype Manager, an AutoCAD
 /// drawing's own): its name, description and pattern as a .lin file writes it -- a dash
-/// positive, a gap negative, 0 a dot -- in drawing units. It is the Linetype value
-/// kFirstLoadedLinetype plus its place in the drawing's linetype table.
+/// positive, a gap negative, 0 a dot -- in drawing units, and the text it draws in it. It is
+/// the Linetype value kFirstLoadedLinetype plus its place in the drawing's linetype table.
 struct LinetypeDef {
     std::string name;
     std::string description{};
     std::vector<double> pattern{};
+    std::vector<LinetypeText> texts{};
     friend bool operator==(const LinetypeDef&, const LinetypeDef&) = default;
 };
 inline constexpr std::uint8_t kFirstLoadedLinetype = 4;

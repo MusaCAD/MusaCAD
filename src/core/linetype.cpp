@@ -8,7 +8,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <string>
+
+#include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
 
@@ -79,10 +82,31 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, double ltscale,
 }
 
 namespace {
+// A complex linetype's text where the walk is at `at`, the line running `dir` there.
+void emit_linetype_text(const LinetypeText& t, Vec2 at, Vec2 dir, double ltscale, std::vector<Vec2>& out) {
+    const double h = t.scale * ltscale;
+    if (t.text.empty() || !(h > 0.0)) {
+        return;
+    }
+    const Vec2 across{-dir.y, dir.x};
+    Vec2 origin = at + dir * (t.x * ltscale) + across * (t.y * ltscale);
+    double rot = t.absolute ? t.rotation : std::atan2(dir.y, dir.x) + t.rotation;
+    if (t.upright) {
+        const Vec2 u{std::cos(rot), std::sin(rot)};
+        if (u.x < -1e-9 || (std::abs(u.x) <= 1e-9 && u.y < 0.0)) {
+            // Turned half round about its middle: in the same place, reading from the left.
+            origin = origin + u * text::text_width(t.text, h) + Vec2{-u.y, u.x} * h;
+            rot += kPi;
+        }
+    }
+    text::append_text_segments(t.text, origin, h, rot, text::Justify::Left, out);
+}
+
 // Walks `pts` with a .lin pattern: positive a dash, negative a gap, 0 a dot (drawn as a dash a
-// fiftieth of the pattern long, so it shows at any zoom the pattern does). An empty or
-// zero-length pattern draws solid.
-void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, double ltscale, std::vector<Vec2>& out) {
+// fiftieth of the pattern long, so it shows at any zoom the pattern does), and draws `texts`
+// where their elements end. An empty or zero-length pattern draws solid.
+void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, std::span<const LinetypeText> texts,
+              double ltscale, std::vector<Vec2>& out) {
     double cycle = 0.0;
     if (pattern != nullptr) {
         for (const double e : *pattern) {
@@ -101,6 +125,14 @@ void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, dou
     std::size_t k = 0;
     double remaining = len_of(0);
     bool pen = (*pattern)[0] >= 0.0;
+    bool started = false;
+    const auto texts_at = [&](std::size_t after, Vec2 at, Vec2 dir) {
+        for (const LinetypeText& t : texts) {
+            if (t.after == after) {
+                emit_linetype_text(t, at, dir, ltscale, out);
+            }
+        }
+    };
     for (std::size_t s = 1; s < pts.size(); ++s) {
         const Vec2 a = pts[s - 1];
         const Vec2 d = pts[s] - a;
@@ -109,6 +141,10 @@ void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, dou
             continue;
         }
         const Vec2 dir = d / seg_len;
+        if (!started && !texts.empty()) {
+            texts_at(0, a, dir);
+        }
+        started = true;
         double pos = 0.0;
         while (pos < seg_len - 1e-12) {
             const double step = std::min(remaining, seg_len - pos);
@@ -119,6 +155,12 @@ void dash_lin(std::span<const Vec2> pts, const std::vector<double>* pattern, dou
             pos += step;
             remaining -= step;
             if (remaining <= 1e-9) {
+                if (!texts.empty()) {
+                    texts_at(k + 1, a + dir * pos, dir);
+                    if (k + 1 == pattern->size()) {
+                        texts_at(0, a + dir * pos, dir); // the next repeat starts
+                    }
+                }
                 k = (k + 1) % pattern->size();
                 remaining = len_of(k);
                 pen = (*pattern)[k] >= 0.0;
@@ -143,11 +185,15 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, const BuiltinLinetype
     if (v < kFirstLoadedLinetype) {
         // Dashed 1, Center 2, Hidden 3 -- the BuiltinLinetypes order is Dashed, Center, Hidden.
         const std::size_t b = lt == Linetype::Dashed ? 0 : lt == Linetype::Center ? 1 : 2;
-        dash_lin(pts, &builtin[b], ltscale, out);
+        dash_lin(pts, &builtin[b], {}, ltscale, out);
         return;
     }
     const std::size_t i = v - kFirstLoadedLinetype;
-    dash_lin(pts, i < loaded.size() ? &loaded[i].pattern : nullptr, ltscale, out);
+    if (i < loaded.size()) {
+        dash_lin(pts, &loaded[i].pattern, loaded[i].texts, ltscale, out);
+    } else {
+        dash_lin(pts, nullptr, {}, ltscale, out);
+    }
 }
 
 const BuiltinLinetypes& legacy_builtin_linetypes() {
@@ -179,6 +225,81 @@ const char* builtin_linetype_name(Linetype lt, bool dxf) noexcept {
     }
     return "Continuous";
 }
+
+namespace {
+// A .lin text element's insides -- `"GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05` -- or nothing for
+// a shape's (`ZIG,ltypeshp.shx,...`). Angles are in degrees unless they end in r (radians) or
+// g (grads).
+std::optional<LinetypeText> parse_lin_text(std::string_view in) {
+    std::vector<std::string> fields;
+    std::string f;
+    bool quoted = false;
+    for (const char c : in) {
+        if (c == '"') {
+            quoted = !quoted;
+            f += c;
+        } else if (c == ',' && !quoted) {
+            fields.push_back(f);
+            f.clear();
+        } else {
+            f += c;
+        }
+    }
+    fields.push_back(f);
+    for (std::string& s : fields) {
+        const std::size_t b = s.find_first_not_of(" \t");
+        const std::size_t e = s.find_last_not_of(" \t");
+        s = b == std::string::npos ? std::string() : s.substr(b, e - b + 1);
+    }
+    if (fields.size() < 2 || fields[0].size() < 2 || fields[0].front() != '"' || fields[0].back() != '"') {
+        return std::nullopt;
+    }
+    LinetypeText t;
+    t.text = fields[0].substr(1, fields[0].size() - 2);
+    t.style = fields[1];
+    for (std::size_t k = 2; k < fields.size(); ++k) {
+        const std::string& s = fields[k];
+        const std::size_t eq = s.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            continue;
+        }
+        const char key = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
+        const std::string value = s.substr(eq + 1);
+        char* end = nullptr;
+        const double v = std::strtod(value.c_str(), &end);
+        if (end == value.c_str()) {
+            continue;
+        }
+        const char unit = static_cast<char>(std::tolower(static_cast<unsigned char>(*end)));
+        const double angle = unit == 'r' ? v : unit == 'g' ? v * kPi / 200.0 : v * kPi / 180.0;
+        switch (key) {
+        case 'S':
+            t.scale = v;
+            break;
+        case 'R':
+            t.rotation = angle;
+            break;
+        case 'A':
+            t.rotation = angle;
+            t.absolute = true;
+            break;
+        case 'U':
+            t.rotation = angle;
+            t.upright = true;
+            break;
+        case 'X':
+            t.x = v;
+            break;
+        case 'Y':
+            t.y = v;
+            break;
+        default:
+            break;
+        }
+    }
+    return t;
+}
+} // namespace
 
 std::vector<LinetypeDef> parse_lin(std::string_view text) {
     std::vector<LinetypeDef> out;
@@ -215,10 +336,13 @@ std::vector<LinetypeDef> parse_lin(std::string_view text) {
             continue;
         }
         want_pattern = false;
-        // A,.5,-.25,["GAS",STANDARD,S=.1,...],-.25: the numbers, a [...] element left out.
+        // A,.5,-.25,["GAS",STANDARD,S=.1,...],-.25: the numbers, and the text a [...] element
+        // draws (a shape's left out).
         std::size_t i = line.find(',');
         int depth = 0;
+        bool quoted = false;
         std::string item;
+        std::string element;
         const auto take = [&] {
             const std::size_t b = item.find_first_not_of(" \t");
             if (b != std::string::npos) {
@@ -232,12 +356,24 @@ std::vector<LinetypeDef> parse_lin(std::string_view text) {
         };
         for (i = i == std::string::npos ? line.size() : i + 1; i < line.size(); ++i) {
             const char c = line[i];
-            if (c == '[') {
+            if (depth > 0 && (quoted || c == '"')) {
+                quoted = quoted != (c == '"');
+                element += c;
+            } else if (c == '[') {
                 ++depth;
                 item.clear();
+                element.clear();
             } else if (c == ']') {
                 depth = std::max(depth - 1, 0);
                 item.clear();
+                if (depth == 0) {
+                    if (std::optional<LinetypeText> t = parse_lin_text(element)) {
+                        t->after = static_cast<std::uint32_t>(out.back().pattern.size());
+                        out.back().texts.push_back(std::move(*t));
+                    }
+                }
+            } else if (depth > 0) {
+                element += c;
             } else if (depth == 0 && c == ',') {
                 take();
             } else if (depth == 0) {
@@ -316,6 +452,25 @@ const std::vector<LinetypeDef>& linetype_library(bool metric) {
         for (const Iso& s : iso) {
             all.push_back(LinetypeDef{s.name, s.look, s.pattern});
         }
+        // The two with text, as acad.lin has them (acadiso.lin's 25.4 times as big):
+        // A,.5,-.2,["GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05],-.25.
+        const auto with_text = [&](const char* name, const char* look, const char* text, double last) {
+            LinetypeDef d;
+            d.name = name;
+            d.description = look;
+            d.pattern = {0.5 * unit, -0.2 * unit, last * unit};
+            LinetypeText t;
+            t.after = 2;
+            t.text = text;
+            t.scale = 0.1 * unit;
+            t.upright = true;
+            t.x = -0.1 * unit;
+            t.y = -0.05 * unit;
+            d.texts.push_back(std::move(t));
+            all.push_back(std::move(d));
+        };
+        with_text("GAS_LINE", "Gas line ----GAS----GAS----GAS----GAS----GAS----GAS--", "GAS", -0.25);
+        with_text("HOT_WATER_SUPPLY", "Hot water supply ---- HW ---- HW ---- HW ----", "HW", -0.2);
         return all;
     };
     static const std::vector<LinetypeDef> kInch = build(1.0);

@@ -8733,6 +8733,7 @@ void CurrentPropCommand::input(CommandContext& ctx, const std::string& text) {
             return;
         }
         created_.pattern = parsed.front().pattern;
+        created_.texts = parsed.front().texts; // text elements typed as a .lin file has them
         ctx.submit(core::LoadLinetypesCommand{{created_}});
         ctx.echo("Linetype " + created_.name + " created and loaded.");
         step_ = Step::LtOption;

@@ -37,8 +37,9 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, double ltscale,
 
 /// The same for any linetype: a built-in one as above, a loaded one (`lt` from
 /// kFirstLoadedLinetype on) by its definition in `loaded`, the drawing's table -- its
-/// .lin pattern walked as written (dashes, gaps, and dots drawn as short dashes). A loaded
-/// value with no definition draws solid.
+/// .lin pattern walked as written (dashes, gaps, and dots drawn as short dashes), and its
+/// text drawn in the stroke font, as more segments. A loaded value with no definition draws
+/// solid.
 void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const LinetypeDef> loaded, double ltscale,
                    std::vector<Vec2>& out);
 
@@ -46,8 +47,9 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, std::span<const Linet
 /// Center, Hidden), and as DXF writes them (Continuous, DASHED, CENTER, HIDDEN).
 [[nodiscard]] const char* builtin_linetype_name(Linetype lt, bool dxf = false) noexcept;
 
-/// The linetypes of a .lin file: each `*NAME,description` with its `A,` pattern line. Shape
-/// and text elements ([...]) are left out, the gaps around them kept.
+/// The linetypes of a .lin file: each `*NAME,description` with its `A,` pattern line, and the
+/// text elements in it (`["GAS",STANDARD,S=.1,U=0.0,X=-0.1,Y=-.05]`). Shape elements
+/// (`[ZIG,ltypeshp.shx,...]`) are left out, the gaps around them kept.
 [[nodiscard]] std::vector<LinetypeDef> parse_lin(std::string_view text);
 
 /// The built-in Dashed, Center and Hidden as a drawing defines them, in .lin form (a dash
@@ -72,7 +74,8 @@ void dash_polyline(std::span<const Vec2> pts, Linetype lt, const BuiltinLinetype
 /// AutoCAD's names and patterns: BORDER, CENTER, DASHDOT, DASHED, DIVIDE, DOT, HIDDEN and
 /// PHANTOM, each with its 2 and X2 sizes, as acad.lin has them (inches) or, `metric`, as
 /// acadiso.lin has them (millimetres, 25.4 times as long), then the ISO linetypes
-/// ACAD_ISO02W100 to ACAD_ISO15W100 (millimetres in both).
+/// ACAD_ISO02W100 to ACAD_ISO15W100 (millimetres in both), then the two with text,
+/// GAS_LINE and HOT_WATER_SUPPLY.
 [[nodiscard]] const std::vector<LinetypeDef>& linetype_library(bool metric);
 
 } // namespace musacad::core
