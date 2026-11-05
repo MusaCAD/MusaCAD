@@ -279,6 +279,12 @@ struct RenderSnapshot {
     /// base point -- the Insert gallery's pictures. Shared, and made again only when the
     /// blocks change.
     std::shared_ptr<const std::vector<std::vector<Vec2>>> block_previews;
+    /// The ribbon's style galleries (#78): per dimension style, multileader style and table
+    /// style (in table order), a dimension, a multileader and a table drawn with it, as segment
+    /// pairs.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> dimstyle_previews;
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> mleaderstyle_previews;
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> tablestyle_previews;
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
@@ -464,6 +470,9 @@ struct RenderSnapshot {
         block_names.clear();
         block_attdefs.clear();
         block_previews.reset();
+        dimstyle_previews.reset();
+        mleaderstyle_previews.reset();
+        tablestyle_previews.reset();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;

@@ -22638,6 +22638,94 @@ void GeometryEngine::rebuild_and_publish() {
         }
         buf.block_previews = block_previews_;
     }
+    // The ribbon's style galleries (#78): a dimension, a multileader and a table drawn with
+    // each style on a scratch store, made again only when the styles change.
+    {
+        // A scratch store's drawing as segment pairs: its lines, and its fills' outlines.
+        const auto pairs_of = [&](const GeometryStore& scratch) {
+            RenderSnapshot tmp;
+            build_render_snapshot(scratch, kernel_, tmp, kDefaultTessTolerance, 1.0);
+            std::vector<Vec2> pairs = std::move(tmp.line_vertices);
+            for (std::size_t i = 0; i + 2 < tmp.fill_vertices.size(); i += 3) {
+                for (std::size_t k = 0; k < 3; ++k) {
+                    pairs.push_back(tmp.fill_vertices[i + k]);
+                    pairs.push_back(tmp.fill_vertices[i + (k + 1) % 3]);
+                }
+            }
+            return pairs;
+        };
+        if (!dimstyle_previews_ || previewed_dimstyles_ != store_.dimstyles()) {
+            auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
+            for (std::size_t i = 0; i < store_.dimstyles().size(); ++i) {
+                GeometryStore scratch;
+                scratch.set_dimstyle_table(store_.dimstyles());
+                const double h = std::max(store_.dimstyles()[i].text_height, 1e-6);
+                scratch.add_dimension(DimType::Linear, {0.0, 0.0}, {8.0 * h, 0.0}, {4.0 * h, 3.0 * h},
+                                      static_cast<std::uint16_t>(i));
+                previews->push_back(pairs_of(scratch));
+            }
+            dimstyle_previews_ = std::move(previews);
+            previewed_dimstyles_ = store_.dimstyles();
+        }
+        if (!mleaderstyle_previews_ || previewed_mleaderstyles_ != store_.mleader_styles()) {
+            auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
+            for (const MLeaderStyle& st : store_.mleader_styles()) {
+                GeometryStore scratch;
+                const double h = std::max(st.text_height, 1e-6);
+                std::vector<Vec2> v{{0.0, 0.0}, {4.0 * h, 3.0 * h}};
+                if (st.landing) {
+                    v.push_back(v.back() + Vec2{std::max(st.landing_distance, h), 0.0});
+                }
+                MTextBlock b;
+                b.height = h;
+                b.attach = 3;
+                b.pos = v.back() + Vec2{st.landing_gap, 0.0};
+                DimOverrides o;
+                o.arrow_type = st.arrow;
+                o.arrow_size = st.arrow_size;
+                o.set(DimOverrides::kArrowType, true);
+                o.set(DimOverrides::kArrowSize, true);
+                const EntityHandle mh = scratch.add_mleader(v, 0, b, st.text ? "Text" : "", EntityProps{}, o);
+                if (!st.landing) {
+                    scratch.set_mleader_flags(mh, 0);
+                } else {
+                    scratch.set_mleader_flags(mh, LeaderForm::kLanding);
+                }
+                previews->push_back(pairs_of(scratch));
+            }
+            mleaderstyle_previews_ = std::move(previews);
+            previewed_mleaderstyles_ = store_.mleader_styles();
+        }
+        if (!tablestyle_previews_ || previewed_tablestyles_ != store_.table_styles()) {
+            auto previews = std::make_shared<std::vector<std::vector<Vec2>>>();
+            for (std::size_t i = 0; i < store_.table_styles().size(); ++i) {
+                GeometryStore scratch;
+                scratch.set_table_style_table(store_.table_styles());
+                AddTableCommand t;
+                t.rows = 4;
+                t.cols = 3;
+                t.cells.assign(12, TableCell{});
+                t.cells[0].span_cols = 3;
+                t.cells[1].span_cols = 0;
+                t.cells[2].span_cols = 0;
+                t.texts.assign(12, std::string("123"));
+                t.texts[0] = "Title";
+                t.texts[3] = t.texts[4] = t.texts[5] = "Header";
+                t.col_widths = {20.0, 20.0, 20.0};
+                t.row_heights = {8.0, 7.0, 7.0, 7.0};
+                t.style = static_cast<std::uint16_t>(i);
+                t.has_title = true;
+                t.has_header = true;
+                (void)add_command_to_store(scratch, t, EntityProps{});
+                previews->push_back(pairs_of(scratch));
+            }
+            tablestyle_previews_ = std::move(previews);
+            previewed_tablestyles_ = store_.table_styles();
+        }
+        buf.dimstyle_previews = dimstyle_previews_;
+        buf.mleaderstyle_previews = mleaderstyle_previews_;
+        buf.tablestyle_previews = tablestyle_previews_;
+    }
     // Image definitions for the renderer's texture cache: embedded payloads by shared
     // pointer (re-made when the version changes), external ones by relative path.
     buf.image_defs.clear();

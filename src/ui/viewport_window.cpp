@@ -280,6 +280,11 @@ std::shared_ptr<const std::vector<std::vector<core::Vec2>>> ViewportWindow::bloc
     return block_previews_;
 }
 
+ViewportWindow::StylePreviews ViewportWindow::style_previews() {
+    std::scoped_lock lock(layers_mutex_);
+    return style_previews_;
+}
+
 std::vector<core::LinetypeDef> ViewportWindow::linetypes() {
     std::scoped_lock lock(layers_mutex_);
     return linetypes_;
@@ -1756,6 +1761,7 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             block_names_ = snap.block_names;
             block_attdefs_ = snap.block_attdefs;
             block_previews_ = snap.block_previews;
+            style_previews_ = StylePreviews{snap.dimstyle_previews, snap.mleaderstyle_previews, snap.tablestyle_previews};
             linetypes_ = snap.linetypes;
             layouts_ = snap.layouts;
             purge_ = snap.purge;

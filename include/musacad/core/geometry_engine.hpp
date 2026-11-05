@@ -768,6 +768,13 @@ private:
     std::uint64_t block_previews_serial_ = 0;
     std::uint64_t block_previews_doc_ = 0;
     std::uint8_t block_previews_units_ = 0; ///< the INSUNITS the previews were sized for
+    // The style galleries' pictures (#78), and the styles they were drawn for.
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> dimstyle_previews_;
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> mleaderstyle_previews_;
+    std::shared_ptr<const std::vector<std::vector<Vec2>>> tablestyle_previews_;
+    std::vector<DimStyle> previewed_dimstyles_;
+    std::vector<MLeaderStyle> previewed_mleaderstyles_;
+    std::vector<TableStyle> previewed_tablestyles_;
     bool any_hidden_ = false;
     RefEditSession refedit_;
 

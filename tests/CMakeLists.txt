@@ -213,6 +213,7 @@ set(_musacad_test_files
     test_hatch_gradients.cpp
     test_mleader_blocks.cpp
     test_express_layout.cpp
+    test_style_previews.cpp
     test_external_files.cpp
     test_update_channel.cpp
     test_fonts.cpp

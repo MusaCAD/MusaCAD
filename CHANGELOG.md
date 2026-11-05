@@ -46,6 +46,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   filtered by name; a value typed in is set as the variable's own command sets it.
 - **LAYOUTMERGE** (#77): layouts made one -- each layout's objects onto the destination's
   sheet, where they were, and the layout deleted.
+- **Style galleries** (#78) -- the Dimension Style, Multileader Style and Table Style lists on
+  Annotate show each style as a picture: a dimension with its arrows and text, a leader with
+  its landing and content, a table's title, header and cells.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).

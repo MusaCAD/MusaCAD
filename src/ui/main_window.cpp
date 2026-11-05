@@ -2104,6 +2104,54 @@ void MainWindow::sync_layer_combo() {
     }
 }
 
+namespace {
+/// A style gallery's picture (#78): a sample's segments fitted into a `w` x `h` box, in `ink`.
+QIcon style_picture(const std::vector<core::Vec2>& pairs, const QColor& ink, int w, int h) {
+    QPixmap px(w, h);
+    px.fill(Qt::transparent);
+    if (pairs.size() >= 2) {
+        core::Vec2 lo = pairs.front();
+        core::Vec2 hi = pairs.front();
+        for (const core::Vec2& p : pairs) {
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        }
+        const double k = std::min((w - 6) / std::max(hi.x - lo.x, 1e-9), (h - 6) / std::max(hi.y - lo.y, 1e-9));
+        const double ox = (w - (hi.x - lo.x) * k) * 0.5;
+        const double oy = (h - (hi.y - lo.y) * k) * 0.5;
+        const auto at = [&](core::Vec2 p) { return QPointF(ox + (p.x - lo.x) * k, h - oy - (p.y - lo.y) * k); };
+        QPainter g(&px);
+        g.setRenderHint(QPainter::Antialiasing);
+        g.setPen(QPen(ink, 1.0));
+        for (std::size_t i = 0; i + 1 < pairs.size(); i += 2) {
+            g.drawLine(at(pairs[i]), at(pairs[i + 1]));
+        }
+    }
+    return QIcon(px);
+}
+
+/// Makes a style combo's list a gallery: its styles as pictures in a grid, each named.
+void make_gallery(QComboBox* box) {
+    if (box == nullptr || box->property("musacadGallery").toBool()) {
+        return;
+    }
+    auto* view = new QListView(box);
+    view->setViewMode(QListView::IconMode);
+    view->setFlow(QListView::LeftToRight);
+    view->setWrapping(true);
+    view->setResizeMode(QListView::Adjust);
+    view->setMovement(QListView::Static);
+    view->setUniformItemSizes(true);
+    view->setIconSize(QSize(96, 56));
+    view->setGridSize(QSize(112, 84));
+    view->setMinimumWidth(112 * 3 + 24);
+    view->setMinimumHeight(84 * 2 + 8);
+    box->setView(view);
+    box->setIconSize(QSize(28, 16));
+    box->setProperty("musacadGallery", true);
+}
+} // namespace
+
 void MainWindow::sync_style_combos() {
     if (viewport_ == nullptr) {
         return;
@@ -2143,12 +2191,30 @@ void MainWindow::sync_style_combos() {
         }
         sync(text_style_combo_, names, viewport_->current_text_style());
     }
+    // The style galleries (#78): each style's picture, drawn again when the samples change.
+    const ViewportWindow::StylePreviews previews = viewport_->style_previews();
+    const auto pictures = [this](QComboBox* box, const ViewportWindow::Previews& samples) {
+        if (box == nullptr || !samples || box->view()->isVisible()) {
+            return;
+        }
+        make_gallery(box);
+        const auto key = static_cast<qulonglong>(reinterpret_cast<quintptr>(samples.get()));
+        if (box->property("musacadPreviews").toULongLong() == key && box->count() == static_cast<int>(samples->size())) {
+            return;
+        }
+        const QColor ink = palette().color(QPalette::Text);
+        for (int i = 0; i < box->count() && i < static_cast<int>(samples->size()); ++i) {
+            box->setItemIcon(i, style_picture((*samples)[static_cast<std::size_t>(i)], ink, 96, 56));
+        }
+        box->setProperty("musacadPreviews", key);
+    };
     if (dim_style_combo_ != nullptr) {
         std::vector<std::string> names;
         for (const core::DimStyle& st : viewport_->dim_styles()) {
             names.push_back(st.name);
         }
         sync(dim_style_combo_, names, viewport_->current_dim_style());
+        pictures(dim_style_combo_, previews.dims);
     }
     if (table_style_combo_ != nullptr) {
         std::vector<std::string> names;
@@ -2156,6 +2222,7 @@ void MainWindow::sync_style_combos() {
             names.push_back(st.name);
         }
         sync(table_style_combo_, names, viewport_->current_table_style());
+        pictures(table_style_combo_, previews.tables);
     }
     if (mleader_style_combo_ != nullptr) {
         std::vector<std::string> names;
@@ -2163,6 +2230,7 @@ void MainWindow::sync_style_combos() {
             names.push_back(st.name);
         }
         sync(mleader_style_combo_, names, viewport_->current_mleader_style());
+        pictures(mleader_style_combo_, previews.mleaders);
     }
 }
 

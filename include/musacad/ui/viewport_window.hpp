@@ -91,6 +91,14 @@ public:
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     /// Per block (as block_names): its geometry as segment pairs (the Insert gallery).
     std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews();
+    /// Per dimension, multileader and table style: a sample drawn with it (the style galleries).
+    using Previews = std::shared_ptr<const std::vector<std::vector<core::Vec2>>>;
+    struct StylePreviews {
+        Previews dims;
+        Previews mleaders;
+        Previews tables;
+    };
+    StylePreviews style_previews();
     /// The linetypes loaded beyond the built-in four.
     std::vector<core::LinetypeDef> linetypes();
     std::vector<core::LayoutInfo> layouts();
@@ -1080,6 +1088,7 @@ private:
     std::vector<core::SelectedDim> selected_dims_; ///< under layers_mutex_ (written on the render thread)
     std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::shared_ptr<const std::vector<std::vector<core::Vec2>>> block_previews_; ///< under layers_mutex_
+    StylePreviews style_previews_; ///< under layers_mutex_
     std::vector<core::LinetypeDef> linetypes_; ///< under layers_mutex_
     std::vector<core::LayoutInfo> layouts_;   ///< under layers_mutex_
     std::uint8_t active_space_ = 0;           ///< under layers_mutex_
