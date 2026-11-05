@@ -27,6 +27,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -133,7 +134,7 @@ void code_d(std::string& s, int c, double v) {
 // justification, 40 / 50 / 41 are the height, the rotation and the width factor as drawn.
 // `measured` is the string whose width justifies the text (an attribute definition is
 // justified by its tag).
-void emit_text_place(std::string& s, const Document& doc, const DocText& t, std::string_view measured) {
+int emit_text_place(std::string& s, const Document& doc, const DocText& t, std::string_view measured) {
     const double style_factor =
         (t.style != 0 && t.style < doc.text_styles.size()) ? doc.text_styles[t.style].width_factor : 1.0;
     const text::TextFrame f = text::frame_of(measured, t.justify, t.pos, t.align, t.height, t.rotation,
@@ -158,6 +159,12 @@ void emit_text_place(std::string& s, const Document& doc, const DocText& t, std:
         code_d(s, 21, second.y);
         code_d(s, 31, 0.0);
     }
+    return vertical; // AcDbText's second part (73) or an attribute's 74, after the text
+}
+
+// A TEXT's second AcDbText part: the vertical alignment (73), after the string and style.
+void emit_text_end(std::string& s, int vertical) {
+    code(s, 100, "AcDbText");
     if (vertical != 0) {
         code(s, 73, std::to_string(vertical));
     }
@@ -403,6 +410,16 @@ constexpr std::uint64_t kRootDictHandle = 0x10;
 constexpr std::uint64_t kImageDictHandle = 0x11;
 constexpr std::uint64_t kMlineStyleDictHandle = 0x12;
 constexpr std::uint64_t kWipeoutVarsHandle = 0x13;
+constexpr std::uint64_t kGroupDictHandle = 0x14;
+
+// Owners (330), as an AutoCAD 2000 file has them: a table's records belong to the table, an
+// entity to its block record -- *Model_Space's, *Paper_Space's or, inside a BLOCK, that
+// block's (`g_owner`, 0 outside one). The records' handles are given with the BLOCK_RECORD
+// table, which comes first.
+thread_local std::uint64_t g_owner = 0;
+thread_local std::uint64_t g_model_record = 0;
+thread_local std::uint64_t g_paper_record = 0;
+thread_local std::vector<std::uint64_t> g_block_records; // each DocBlockDef's, in order
 
 std::string handle_hex(std::uint64_t h) {
     char buf[20];
@@ -412,6 +429,17 @@ std::string handle_hex(std::uint64_t h) {
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     }
     return out;
+}
+
+/// *Model_Space or *Paper_Space: the blocks AutoCAD keeps the two spaces' entities in, which
+/// are not blocks to insert.
+bool is_space_block(std::string_view name) {
+    const auto same = [&](std::string_view w) {
+        return name.size() == w.size() && std::equal(name.begin(), name.end(), w.begin(), [](char a, char b) {
+                   return std::toupper(static_cast<unsigned char>(a)) == std::toupper(static_cast<unsigned char>(b));
+               });
+    };
+    return same("*Model_Space") || same("*Paper_Space");
 }
 
 std::uint64_t emit_handle(std::string& s) {
@@ -521,9 +549,29 @@ void emit_classes(std::string& s, const Document& doc) {
 // One LTYPE record: name + dash elements (positive = dash, negative = gap), in
 // drawing units. Must match core/linetype.cpp so a Musa-dashed entity reads dashed
 // in other CAD apps. `elems` empty => Continuous (solid).
+// A table's head (its handle, owned by nothing) and a record's: its handle and table, and
+// the subclass markers an AutoCAD 2000 reader reads the record by.
+std::uint64_t emit_table_head(std::string& s, const char* name, long count) {
+    code(s, 0, "TABLE");
+    code(s, 2, name);
+    const std::uint64_t h = emit_handle(s);
+    code(s, 330, "0");
+    code(s, 100, "AcDbSymbolTable");
+    code_i(s, 70, count);
+    return h;
+}
+thread_local std::uint64_t g_table = 0; // the table whose records are being written
+std::uint64_t emit_record_head(std::string& s, const char* type, const char* subclass) {
+    code(s, 0, type);
+    const std::uint64_t h = emit_handle(s);
+    code(s, 330, handle_hex(g_table));
+    code(s, 100, "AcDbSymbolTableRecord");
+    code(s, 100, subclass);
+    return h;
+}
+
 void emit_ltype(std::string& s, const char* name, std::span<const double> elems) {
-    code(s, 0, "LTYPE");
-    emit_handle(s);
+    emit_record_head(s, "LTYPE", "AcDbLinetypeTableRecord");
     code(s, 2, name);
     code_i(s, 70, 0);
     code(s, 3, name); // description
@@ -544,9 +592,9 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     code(s, 2, "TABLES");
     // LTYPE table first -- layers/entities reference these patterns by name. The
     // element lengths mirror core/linetype.cpp (Dashed/Hidden/Center).
-    code(s, 0, "TABLE");
-    code(s, 2, "LTYPE");
-    code_i(s, 70, 4);
+    g_table = emit_table_head(s, "LTYPE", 4);
+    emit_ltype(s, "ByBlock", {});
+    emit_ltype(s, "ByLayer", {});
     // The drawing's own loaded linetypes after the built-in ones (one of those it has
     // loaded by a built-in name is written in its place).
     const auto loaded = [&](const char* name) {
@@ -567,8 +615,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         }
     }
     for (const LinetypeDef& d : doc.linetypes) {
-        code(s, 0, "LTYPE");
-        emit_handle(s);
+        emit_record_head(s, "LTYPE", "AcDbLinetypeTableRecord");
         code(s, 2, d.name);
         code_i(s, 70, 0);
         code(s, 3, d.description);
@@ -592,12 +639,9 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         if (tiles.empty()) {
             tiles.push_back(TiledViewport{});
         }
-        code(s, 0, "TABLE");
-        code(s, 2, "VPORT");
-        code_i(s, 70, static_cast<long>(tiles.size()));
+        g_table = emit_table_head(s, "VPORT", static_cast<long>(tiles.size()));
         for (const TiledViewport& t : tiles) {
-            code(s, 0, "VPORT");
-            emit_handle(s);
+            emit_record_head(s, "VPORT", "AcDbViewportTableRecord");
             code(s, 2, "*Active");
             code_i(s, 70, 0);
             code_d(s, 10, t.x0);
@@ -610,12 +654,10 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         }
         code(s, 0, "ENDTAB");
     }
-    code(s, 0, "TABLE");
-    code(s, 2, "LAYER");
-    code_i(s, 70, static_cast<long>(doc.layers.size()));
+    g_table = emit_table_head(s, "LAYER", static_cast<long>(doc.layers.size()));
     for (const Layer& l : doc.layers) {
-        code(s, 0, "LAYER");
-        layer_handles.push_back(emit_handle(s)); // VIEWPORT 331 points back here
+        // VIEWPORT 331 points back here
+        layer_handles.push_back(emit_record_head(s, "LAYER", "AcDbLayerTableRecord"));
         code(s, 2, l.name);
         // 1 = frozen, 2 = frozen in new viewports (VPLAYER Vpvisdflt), 4 = locked.
         code_i(s, 70, (l.frozen ? 1 : 0) | (l.vp_freeze_new ? 2 : 0) | (l.locked ? 4 : 0));
@@ -641,12 +683,9 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
     code(s, 0, "ENDTAB");
     // STYLE table (v26): Standard first, then the drawing's text styles -- name, font
     // file (txt for the stroke font), fixed height, width factor, obliquing angle.
-    code(s, 0, "TABLE");
-    code(s, 2, "STYLE");
-    code_i(s, 70, static_cast<long>(std::max<std::size_t>(doc.text_styles.size(), 1)));
+    g_table = emit_table_head(s, "STYLE", static_cast<long>(std::max<std::size_t>(doc.text_styles.size(), 1)));
     if (doc.text_styles.empty()) {
-        code(s, 0, "STYLE");
-        emit_handle(s);
+        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord");
         code(s, 2, "Standard");
         code_i(s, 70, 0);
         code_d(s, 40, 0.0);
@@ -655,8 +694,7 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code(s, 3, "txt");
     }
     for (const TextStyle& ts : doc.text_styles) {
-        code(s, 0, "STYLE");
-        emit_handle(s);
+        emit_record_head(s, "STYLE", "AcDbTextStyleTableRecord");
         code(s, 2, ts.name);
         code_i(s, 70, 0);
         code_d(s, 40, ts.height);
@@ -666,13 +704,33 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code(s, 3, ts.font.empty() ? "txt" : ts.font);
     }
     code(s, 0, "ENDTAB");
-    // DIMSTYLE table (minimal: name + the formatting Musa models).
-    code(s, 0, "TABLE");
-    code(s, 2, "DIMSTYLE");
-    code_i(s, 70, static_cast<long>(doc.dimstyles.size()));
+    // VIEW and UCS: none written, but AutoCAD expects the tables. APPID: the applications
+    // whose XDATA the file carries (ACAD's DSTYLE overrides, the layers' description and
+    // transparency).
+    g_table = emit_table_head(s, "VIEW", 0);
+    code(s, 0, "ENDTAB");
+    g_table = emit_table_head(s, "UCS", 0);
+    code(s, 0, "ENDTAB");
+    {
+        const char* apps[] = {"ACAD", "AcAecLayerStandard", "AcCmTransparency"};
+        g_table = emit_table_head(s, "APPID", 3);
+        for (const char* app : apps) {
+            emit_record_head(s, "APPID", "AcDbRegAppTableRecord");
+            code(s, 2, app);
+            code_i(s, 70, 0);
+        }
+        code(s, 0, "ENDTAB");
+    }
+    // DIMSTYLE table (minimal: name + the formatting Musa models). Its records carry their
+    // handle in 105, not 5.
+    g_table = emit_table_head(s, "DIMSTYLE", static_cast<long>(doc.dimstyles.size()));
+    code(s, 100, "AcDbDimStyleTable");
     for (const DimStyle& ds : doc.dimstyles) {
         code(s, 0, "DIMSTYLE");
-        emit_handle(s);
+        code(s, 105, handle_hex(g_handle++));
+        code(s, 330, handle_hex(g_table));
+        code(s, 100, "AcDbSymbolTableRecord");
+        code(s, 100, "AcDbDimStyleTableRecord");
         code(s, 2, ds.name);
         code_d(s, 140, ds.text_height); // DIMTXT
         code_d(s, 41, ds.arrow_size);   // DIMASZ
@@ -720,22 +778,23 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
         code_d(s, 146, ds.tol_height); // DIMTFAC
     }
     code(s, 0, "ENDTAB");
-    // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up).
-    code(s, 0, "TABLE");
-    code(s, 2, "BLOCK_RECORD");
-    code_i(s, 70, static_cast<long>(doc.block_defs.size() + 2));
+    // BLOCK_RECORD: the two spaces and every definition (R2000 readers look them up); the
+    // entities name theirs as their owner.
+    const auto space_blocks = std::count_if(doc.block_defs.begin(), doc.block_defs.end(),
+                                            [](const DocBlockDef& b) { return is_space_block(b.name); });
+    g_table = emit_table_head(s, "BLOCK_RECORD",
+                              static_cast<long>(doc.block_defs.size()) + 2 - static_cast<long>(space_blocks));
     const auto block_record = [&](const std::string& name, std::uint8_t units) {
-        code(s, 0, "BLOCK_RECORD");
-        emit_handle(s);
-        code(s, 100, "AcDbSymbolTableRecord");
-        code(s, 100, "AcDbBlockTableRecord");
+        const std::uint64_t h = emit_record_head(s, "BLOCK_RECORD", "AcDbBlockTableRecord");
         code(s, 2, name);
         code_i(s, 70, units); // the block's insertion units
+        return h;
     };
-    block_record("*Model_Space", 0);
-    block_record("*Paper_Space", 0);
+    g_model_record = block_record("*Model_Space", 0);
+    g_paper_record = block_record("*Paper_Space", 0);
+    g_block_records.clear();
     for (const DocBlockDef& b : doc.block_defs) {
-        block_record(b.name, b.units);
+        g_block_records.push_back(is_space_block(b.name) ? 0 : block_record(b.name, b.units));
     }
     code(s, 0, "ENDTAB");
     code(s, 0, "ENDSEC");
@@ -744,12 +803,19 @@ void emit_layer_table(std::string& s, const Document& doc, std::vector<std::uint
 // Per-entity layer/colour/linetype/lineweight (after geometry codes).
 void emit_props_body(std::string& s, const Document& doc, const EntityProps& p);
 
-void emit_props(std::string& s, const Document& doc, const EntityProps& p) {
-    emit_handle(s);
+std::uint64_t emit_props(std::string& s, const Document& doc, const EntityProps& p) {
+    const std::uint64_t h = emit_handle(s);
     emit_props_body(s, doc, p);
+    return h;
 }
 
 void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) {
+    // Its owner, then AcDbEntity: in paper space (67) when it is not in a block.
+    code(s, 330, handle_hex(g_owner != 0 ? g_owner : p.space() != 0 ? g_paper_record : g_model_record));
+    code(s, 100, "AcDbEntity");
+    if (g_owner == 0 && p.space() != 0) {
+        code_i(s, 67, 1); // paper space (the layouts are written as one paper space)
+    }
     const std::string layer =
         p.layer < doc.layers.size() ? doc.layers[p.layer].name : std::string("0");
     code(s, 8, layer);
@@ -776,9 +842,6 @@ void emit_props_body(std::string& s, const Document& doc, const EntityProps& p) 
         code_i(s, 440, 0x01000000L);
     } else if (p.transparency <= 90) {
         code_i(s, 440, 0x02000000L | std::lround(255.0 * (100.0 - p.transparency) / 100.0));
-    }
-    if (p.space() != 0) {
-        code_i(s, 67, 1); // paper space (the layouts are written as one paper space)
     }
 }
 
@@ -898,6 +961,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocPoint& p : doc.points) {
         code(s, 0, "POINT");
         emit_props_at(EntityKind::Point, static_cast<std::size_t>(&p - doc.points.data()), p.props);
+        code(s, 100, "AcDbPoint");
         code_d(s, 10, p.p.x);
         code_d(s, 20, p.p.y);
         code_d(s, 30, 0.0);
@@ -907,6 +971,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocEllipse& e : doc.ellipses) {
         code(s, 0, "ELLIPSE");
         emit_props(s, doc, e.props);
+        code(s, 100, "AcDbEllipse");
         code_d(s, 10, e.center.x);
         code_d(s, 20, e.center.y);
         code_d(s, 30, 0.0);
@@ -935,6 +1000,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
         code(s, 0, "SPLINE");
         emit_props(s, doc, sp.props);
+        code(s, 100, "AcDbSpline");
         code(s, 70, "8");
         code(s, 71, std::to_string(deg).c_str());
         code(s, 72, std::to_string(knots.size()).c_str());
@@ -971,6 +1037,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocXline& x : doc.xlines) {
         code(s, 0, x.ray ? "RAY" : "XLINE");
         emit_props(s, doc, x.props);
+        code(s, 100, x.ray ? "AcDbRay" : "AcDbXline");
         code_d(s, 10, x.base.x);
         code_d(s, 20, x.base.y);
         code_d(s, 30, 0.0);
@@ -993,7 +1060,6 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const std::vector<double> md = mline::offsets(mst, m.scale, m.justification);
         code(s, 0, "MLINE");
         emit_handle(s);
-        code(s, 100, "AcDbEntity");
         emit_props_body(s, doc, m.props);
         code(s, 100, "AcDbMline");
         code(s, 2, mst.name);
@@ -1047,6 +1113,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (l.celtscale != 1.0) {
             code_d(s, 48, l.celtscale); // per-entity linetype scale (CELTSCALE)
         }
+        code(s, 100, "AcDbLine");
         code_d(s, 10, l.a.x);
         code_d(s, 20, l.a.y);
         code_d(s, 30, 0.0);
@@ -1060,6 +1127,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (c.celtscale != 1.0) {
             code_d(s, 48, c.celtscale);
         }
+        code(s, 100, "AcDbCircle");
         code_d(s, 10, c.center.x);
         code_d(s, 20, c.center.y);
         code_d(s, 30, 0.0);
@@ -1071,10 +1139,12 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (a.celtscale != 1.0) {
             code_d(s, 48, a.celtscale);
         }
+        code(s, 100, "AcDbCircle");
         code_d(s, 10, a.center.x);
         code_d(s, 20, a.center.y);
         code_d(s, 30, 0.0);
         code_d(s, 40, a.radius);
+        code(s, 100, "AcDbArc");
         code_d(s, 50, to_degrees(a.start_angle));
         code_d(s, 51, to_degrees(a.end_angle));
     }
@@ -1089,10 +1159,12 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         };
         const bool spline = p.fit == 5 || p.fit == 6;
         code(s, 0, "POLYLINE");
-        emit_props(s, doc, p.props);
+        const std::uint64_t parent = emit_props(s, doc, p.props);
+        const std::uint64_t owner = g_owner;
         if (p.celtscale != 1.0) {
             code_d(s, 48, p.celtscale);
         }
+        code(s, 100, "AcDb2dPolyline");
         code_i(s, 66, 1);
         code_d(s, 10, 0.0);
         code_d(s, 20, 0.0);
@@ -1109,6 +1181,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const auto vertex = [&](Vec2 at, long flags, double bulge, double w0, double w1, double tan) {
             code(s, 0, "VERTEX");
             emit_props(s, doc, p.props);
+            code(s, 100, "AcDbVertex");
+            code(s, 100, "AcDb2dVertex");
             code_d(s, 10, at.x);
             code_d(s, 20, at.y);
             code_d(s, 30, p.elevation);
@@ -1125,6 +1199,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             }
         };
         const double none = std::numeric_limits<double>::quiet_NaN();
+        g_owner = parent; // its VERTEX and SEQEND records are the POLYLINE's
         if (spline) {
             for (std::size_t i = 0; i < p.frame.size(); ++i) {
                 vertex(p.frame[i], 16, 0.0, 0.0, 0.0, tangent(i));
@@ -1147,6 +1222,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
         code(s, 0, "SEQEND");
         emit_props(s, doc, p.props);
+        g_owner = owner;
     };
     for (const DocPolyline& p : doc.polylines) {
         if ((p.fit != 0 && p.frame.size() >= 2) || !p.tangents.empty()) {
@@ -1158,6 +1234,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (p.celtscale != 1.0) {
             code_d(s, 48, p.celtscale);
         }
+        code(s, 100, "AcDbPolyline");
         code_i(s, 90, static_cast<long>(p.points.size()));
         code_i(s, 70, (p.closed ? 1 : 0) | (p.ltype_gen ? 128 : 0)); // 128: linetype generation
         emit_polyline_widths_header(s, p);
@@ -1175,35 +1252,42 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocText& t : doc.texts) {
         code(s, 0, "TEXT");
         emit_props(s, doc, t.props);
-        emit_text_place(s, doc, t, t.content);
+        code(s, 100, "AcDbText");
+        const int vertical = emit_text_place(s, doc, t, t.content);
         code(s, 1, t.content);
         if (t.style != 0 && t.style < doc.text_styles.size()) {
             code(s, 7, doc.text_styles[t.style].name); // the STYLE table entry
         } else if (!t.font.empty()) {
             code(s, 7, t.font); // style name = font (re-imported via the code-7 fallback)
         }
+        emit_text_end(s, vertical);
     }
     for (const DocAttDef& a : doc.attdefs) {
         code(s, 0, "ATTDEF");
         emit_props(s, doc, a.text.props);
-        emit_text_place(s, doc, a.text, a.text.content);
+        code(s, 100, "AcDbText");
+        const int vertical = emit_text_place(s, doc, a.text, a.text.content);
         code(s, 1, a.def);            // default value
         if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
             code(s, 7, doc.text_styles[a.text.style].name);
         } else if (!a.text.font.empty()) {
             code(s, 7, a.text.font);
         }
+        code(s, 100, "AcDbAttributeDefinition");
         code(s, 3, a.prompt);         // prompt
         code(s, 2, a.text.content);   // tag
         code_i(s, 70, a.flags);       // 1 invisible, 2 constant, 4 verify, 8 preset
+        if (vertical != 0) {
+            code_i(s, 74, vertical);
+        }
     }
     for (const DocDim& d : doc.dims) {
         const std::string style =
             d.style < doc.dimstyles.size() ? doc.dimstyles[d.style].name : std::string("Standard");
         code(s, 0, "DIMENSION");
         emit_props_at(EntityKind::Dimension, static_cast<std::size_t>(&d - doc.dims.data()), d.props);
+        code(s, 100, "AcDbDimension");
         code(s, 2, "*D0"); // anonymous block name (graphics regenerated by readers)
-        code(s, 3, style);
         const auto kind = static_cast<DimType>(d.type);
         const bool radial = kind == DimType::Radius || kind == DimType::Diameter || kind == DimType::Jogged;
         // The groups by type, as AutoCAD lays them out. Linear and aligned: 10 on the
@@ -1263,47 +1347,6 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             break;
         }
         code_i(s, 70, dimtype);
-        if (d.text_angle != 0.0) {
-            code_d(s, 53, to_degrees(d.text_angle)); // the text's own angle
-        }
-        if (d.oblique != 0.0) {
-            code_d(s, 52, to_degrees(d.oblique)); // the extension lines' angle
-        }
-        if (static_cast<DimType>(d.type) == DimType::Linear) {
-            // 50: the angle of a rotated (horizontal, vertical, rotated) dimension's line.
-            DimData dl;
-            dl.type = DimType::Linear;
-            dl.a = d.a;
-            dl.b = d.b;
-            dl.aux = d.aux;
-            const Vec2 u = dim_line_direction(dl);
-            code_d(s, 50, to_degrees(std::atan2(u.y, u.x)));
-        }
-        Vec2 pa = d.a;
-        Vec2 pb = d.b;
-        if (kind == DimType::ArcLength) {
-            // Aligned between the arc's two ends (a = centre, b = start, aux = end angle).
-            const double r = std::hypot(d.b.x - d.a.x, d.b.y - d.a.y);
-            pa = d.b;
-            pb = {d.a.x + r * std::cos(d.aux), d.a.y + r * std::sin(d.aux)};
-        } else if (kind == DimType::Angular) {
-            pa = d.b;
-            pb = d.line_pt;
-        }
-        if (!radial) {
-            code_d(s, 13, pa.x);
-            code_d(s, 23, pa.y);
-            code_d(s, 33, 0.0);
-            code_d(s, 14, pb.x);
-            code_d(s, 24, pb.y);
-            code_d(s, 34, 0.0);
-        }
-        if (radial || kind == DimType::Angular) {
-            const Vec2 p15 = radial ? d.b : d.a;
-            code_d(s, 15, p15.x);
-            code_d(s, 25, p15.y);
-            code_d(s, 35, 0.0);
-        }
         // Text decoration -> the DIMENSION text OVERRIDE (group code 1), so other CAD
         // shows the decorated value instead of a bare measurement. The string is built
         // by the SAME compose_dim_label the renderer uses, so what a vendor sees can
@@ -1335,6 +1378,64 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             // A two-line (limits) label becomes AutoCAD's stacked-text form.
             code(s, 1, lbl.line2.empty() ? lbl.line1 : lbl.line1 + "\\P" + lbl.line2);
         }
+        if (d.text_angle != 0.0) {
+            code_d(s, 53, to_degrees(d.text_angle)); // the text's own angle
+        }
+        code(s, 3, style);
+        // The type's own part. Linear and aligned: the extension lines' points, a rotated
+        // one's angle (50) and the extension lines' (52). Radial: the point on the circle
+        // (15). Angular: the rays' points and the vertex. Ordinate: the feature and the
+        // leader's end.
+        Vec2 pa = d.a;
+        Vec2 pb = d.b;
+        if (kind == DimType::ArcLength) {
+            // Aligned between the arc's two ends (a = centre, b = start, aux = end angle).
+            const double r = std::hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+            pa = d.b;
+            pb = {d.a.x + r * std::cos(d.aux), d.a.y + r * std::sin(d.aux)};
+        } else if (kind == DimType::Angular) {
+            pa = d.b;
+            pb = d.line_pt;
+        }
+        const char* subclass = kind == DimType::Angular   ? "AcDb3PointAngularDimension"
+                               : kind == DimType::Ordinate ? "AcDbOrdinateDimension"
+                               : kind == DimType::Diameter ? "AcDbDiametricDimension"
+                               : radial                    ? "AcDbRadialDimension"
+                                                           : "AcDbAlignedDimension";
+        code(s, 100, subclass);
+        if (!radial) {
+            code_d(s, 13, pa.x);
+            code_d(s, 23, pa.y);
+            code_d(s, 33, 0.0);
+            code_d(s, 14, pb.x);
+            code_d(s, 24, pb.y);
+            code_d(s, 34, 0.0);
+        }
+        if (radial || kind == DimType::Angular) {
+            const Vec2 p15 = radial ? d.b : d.a;
+            code_d(s, 15, p15.x);
+            code_d(s, 25, p15.y);
+            code_d(s, 35, 0.0);
+        }
+        if (radial) {
+            code_d(s, 40, 0.0); // the leader length: none
+        }
+        if (static_cast<DimType>(d.type) == DimType::Linear) {
+            // 50: the angle of a rotated (horizontal, vertical, rotated) dimension's line.
+            DimData dl;
+            dl.type = DimType::Linear;
+            dl.a = d.a;
+            dl.b = d.b;
+            dl.aux = d.aux;
+            const Vec2 u = dim_line_direction(dl);
+            code_d(s, 50, to_degrees(std::atan2(u.y, u.x)));
+        }
+        if (d.oblique != 0.0 && !radial && kind != DimType::Angular && kind != DimType::Ordinate) {
+            code_d(s, 52, to_degrees(d.oblique)); // the extension lines' angle
+        }
+        if (kind == DimType::Linear) {
+            code(s, 100, "AcDbRotatedDimension");
+        }
     }
     // Leaders: exported as a DXF LEADER (vertices) plus a TEXT label so any reader
     // shows them. Import reconstructs them as line + text (see docs); Musa keeps
@@ -1346,6 +1447,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocFcf& f : doc.fcfs) {
         code(s, 0, "TOLERANCE");
         emit_props(s, doc, f.props);
+        code(s, 100, "AcDbFcf");
         code(s, 3, f.style < doc.dimstyles.size() ? doc.dimstyles[f.style].name : std::string("Standard"));
         code_d(s, 10, f.pos.x);
         code_d(s, 20, f.pos.y);
@@ -1369,6 +1471,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocDatum& d : doc.datums) {
         code(s, 0, "TOLERANCE");
         emit_props(s, doc, d.props);
+        code(s, 100, "AcDbFcf");
         code(s, 3, d.style < doc.dimstyles.size() ? doc.dimstyles[d.style].name : std::string("Standard"));
         code_d(s, 10, d.pos.x);
         code_d(s, 20, d.pos.y);
@@ -1381,6 +1484,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     for (const DocLeader& l : doc.leaders) {
         code(s, 0, "LEADER");
         emit_props(s, doc, l.props);
+        code(s, 100, "AcDbLeader");
         const std::string style =
             l.style < doc.dimstyles.size() ? doc.dimstyles[l.style].name : std::string("Standard");
         code(s, 3, style);
@@ -1394,11 +1498,13 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (!l.content.empty()) {
             code(s, 0, "TEXT");
             emit_props(s, doc, l.props);
+            code(s, 100, "AcDbText");
             code_d(s, 10, l.knee.x);
             code_d(s, 20, l.knee.y);
             code_d(s, 30, 0.0);
             code_d(s, 40, l.text_height);
             code(s, 1, l.content);
+            emit_text_end(s, 0);
         }
     }
     // MTEXT: standard group codes (read by AutoCAD/LibreCAD).
@@ -1406,6 +1512,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                                 const EntityProps& props, const std::string& font = {}) {
         code(s, 0, "MTEXT");
         emit_props(s, doc, props);
+        code(s, 100, "AcDbMText");
         code_d(s, 10, b.pos.x);
         code_d(s, 20, b.pos.y);
         code_d(s, 30, 0.0);
@@ -1441,6 +1548,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         if (m.vertices.size() >= 2 && (m.leader_flags & 2u) == 0) {
             code(s, 0, "LEADER");
             emit_props(s, doc, m.props);
+            code(s, 100, "AcDbLeader");
             code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1); // arrowhead flag
             code_i(s, 72, (m.leader_flags & 1u) != 0 ? 1 : 0); // path type: straight / spline
             code_i(s, 76, static_cast<long>(m.vertices.size()));
@@ -1454,6 +1562,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const Vec2& tip : m.extra_tips) {
                 code(s, 0, "LEADER");
                 emit_props(s, doc, m.props);
+                code(s, 100, "AcDbLeader");
                 code_i(s, 71, (m.leader_flags & 4u) != 0 ? 0 : 1);
                 code_i(s, 72, 0);
                 code_i(s, 76, 2);
@@ -1492,7 +1601,6 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             const double ht = std::max(hi.y - lo.y, 1e-9);
             code(s, 0, "WIPEOUT");
             emit_handle(s);
-            code(s, 100, "AcDbEntity");
             emit_props_body(s, doc, h.props);
             code(s, 100, "AcDbWipeout");
             code_i(s, 90, 0);
@@ -1531,6 +1639,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const bool gradient = h.pattern_name == "GRADIENT";
         code(s, 0, "HATCH");
         emit_props(s, doc, h.props);
+        code(s, 100, "AcDbHatch");
         code_d(s, 10, 0.0); // elevation point + normal (planar at z=0)
         code_d(s, 20, 0.0);
         code_d(s, 30, 0.0);
@@ -1638,7 +1747,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // Model-space block references.
     const auto emit_insert = [&](const DocInsert& in) {
         code(s, 0, "INSERT");
-        emit_props(s, doc, in.props);
+        const std::uint64_t parent = emit_props(s, doc, in.props);
+        code(s, 100, "AcDbBlockReference");
         // Attributes follow as ATTRIB entities (66 = 1) and end with SEQEND, each placed
         // where the definition's attdef lands under this insert's transform.
         const DocBlockDef* def = nullptr;
@@ -1665,6 +1775,8 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         }
         const double cs = std::cos(in.rotation);
         const double sn = std::sin(in.rotation);
+        const std::uint64_t owner = g_owner;
+        g_owner = parent; // its ATTRIB and SEQEND records are the INSERT's
         for (const DocAttDef& a : def->attdefs) {
             std::string value = a.def;
             for (const DocAttrib& at : in.attribs) {
@@ -1679,6 +1791,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
                              in.pos.y + local.x * sn + local.y * cs};
             code(s, 0, "ATTRIB");
             emit_props(s, doc, a.text.props);
+            code(s, 100, "AcDbText");
             code_d(s, 10, world.x);
             code_d(s, 20, world.y);
             code_d(s, 30, 0.0);
@@ -1686,10 +1799,16 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code(s, 1, value);
             code_d(s, 50, to_degrees(a.text.rotation + in.rotation));
             code_i(s, 72, a.text.justify);
+            code(s, 100, "AcDbAttribute");
             code(s, 2, a.text.content);
             code_i(s, 70, a.flags);
         }
         code(s, 0, "SEQEND");
+        emit_handle(s);
+        code(s, 330, handle_hex(parent));
+        code(s, 100, "AcDbEntity");
+        code(s, 8, "0");
+        g_owner = owner;
     };
     for (const DocInsert& in : doc.inserts) {
         emit_insert(in);
@@ -1708,7 +1827,6 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
         const double sn = std::sin(im.rotation);
         code(s, 0, "IMAGE");
         const std::uint64_t self = emit_handle(s);
-        code(s, 100, "AcDbEntity");
         emit_props_body(s, doc, im.props);
         code(s, 100, "AcDbRasterImage");
         code_i(s, 90, 0);
@@ -1753,10 +1871,10 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // the model view it shows (view centre, view height = frame height / scale).
     for (const DocViewport& v : doc.viewports) {
         code(s, 0, "VIEWPORT");
-        emit_props(s, doc, v.props);
-        if (v.props.space() == 0) {
-            code_i(s, 67, 1);
-        }
+        EntityProps in_paper = v.props; // a viewport is in paper space
+        in_paper.set_space(std::max<std::uint8_t>(v.props.space(), 1));
+        emit_props(s, doc, in_paper);
+        code(s, 100, "AcDbViewport");
         code_d(s, 10, v.center.x);
         code_d(s, 20, v.center.y);
         code_d(s, 30, 0.0);
@@ -1779,15 +1897,55 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
     // after the entities (the emitters above are what it uses), and moved before
     // ENTITIES when the file is assembled.
     refs.blocks_begin = s.size();
-    if (!doc.block_defs.empty()) {
+    {
         code(s, 0, "SECTION");
         code(s, 2, "BLOCKS");
-        for (const DocBlockDef& b : doc.block_defs) {
+        // BLOCK and ENDBLK, owned by the block's record, as AutoCAD 2000 writes them.
+        const auto block_begin = [&](std::uint64_t record, const std::string& name, bool paper) {
             code(s, 0, "BLOCK");
             emit_handle(s);
+            code(s, 330, handle_hex(record));
+            code(s, 100, "AcDbEntity");
+            if (paper) {
+                code_i(s, 67, 1);
+            }
             code(s, 8, "0");
-            code(s, 2, b.name);
-            code_i(s, 70, b.xref_path.empty() ? 0 : 4); // 4 = an external reference
+            code(s, 100, "AcDbBlockBegin");
+            code(s, 2, name);
+        };
+        const auto block_end = [&](std::uint64_t record, bool paper) {
+            code(s, 0, "ENDBLK");
+            emit_handle(s);
+            code(s, 330, handle_hex(record));
+            code(s, 100, "AcDbEntity");
+            if (paper) {
+                code_i(s, 67, 1);
+            }
+            code(s, 8, "0");
+            code(s, 100, "AcDbBlockEnd");
+        };
+        // The two spaces' blocks: empty, their entities are in ENTITIES.
+        for (const auto& [record, name, paper] :
+             {std::tuple{g_model_record, std::string("*Model_Space"), false},
+              std::tuple{g_paper_record, std::string("*Paper_Space"), true}}) {
+            block_begin(record, name, paper);
+            code_i(s, 70, 0);
+            code_d(s, 10, 0.0);
+            code_d(s, 20, 0.0);
+            code_d(s, 30, 0.0);
+            code(s, 3, name);
+            code(s, 1, "");
+            block_end(record, paper);
+        }
+        for (std::size_t bi = 0; bi < doc.block_defs.size(); ++bi) {
+            const DocBlockDef& b = doc.block_defs[bi];
+            if (is_space_block(b.name)) {
+                continue; // one from a file read before these were left out: the spaces are above
+            }
+            const std::uint64_t record = bi < g_block_records.size() ? g_block_records[bi] : g_model_record;
+            block_begin(record, b.name, false);
+            // 1 = anonymous (a name starting with *, as AutoCAD's *U and *D), 4 = an external reference.
+            code_i(s, 70, (b.name.starts_with('*') ? 1 : 0) | (b.xref_path.empty() ? 0 : 4));
             if (!b.xref_path.empty()) {
                 code(s, 1, b.xref_path);
             }
@@ -1795,9 +1953,11 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             code_d(s, 20, b.base.y);
             code_d(s, 30, 0.0);
             code(s, 3, b.name);
+            g_owner = record; // what follows is the block's
             for (const DocLine& l : b.lines) {
                 code(s, 0, "LINE");
                 emit_props(s, doc, l.props);
+                code(s, 100, "AcDbLine");
                 code_d(s, 10, l.a.x);
                 code_d(s, 20, l.a.y);
                 code_d(s, 11, l.b.x);
@@ -1806,6 +1966,7 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocCircle& c : b.circles) {
                 code(s, 0, "CIRCLE");
                 emit_props(s, doc, c.props);
+                code(s, 100, "AcDbCircle");
                 code_d(s, 10, c.center.x);
                 code_d(s, 20, c.center.y);
                 code_d(s, 40, c.radius);
@@ -1813,15 +1974,18 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocArc& a : b.arcs) {
                 code(s, 0, "ARC");
                 emit_props(s, doc, a.props);
+                code(s, 100, "AcDbCircle");
                 code_d(s, 10, a.center.x);
                 code_d(s, 20, a.center.y);
                 code_d(s, 40, a.radius);
+                code(s, 100, "AcDbArc");
                 code_d(s, 50, to_degrees(a.start_angle));
                 code_d(s, 51, to_degrees(a.end_angle));
             }
             for (const DocPolyline& p : b.polylines) {
                 code(s, 0, "LWPOLYLINE");
                 emit_props(s, doc, p.props);
+                code(s, 100, "AcDbPolyline");
                 code_i(s, 90, static_cast<long>(p.points.size()));
                 code_i(s, 70, p.closed ? 1 : 0);
                 emit_polyline_widths_header(s, p);
@@ -1838,8 +2002,10 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocText& t : b.texts) {
                 code(s, 0, "TEXT");
                 emit_props(s, doc, t.props);
-                emit_text_place(s, doc, t, t.content);
+                code(s, 100, "AcDbText");
+                const int vertical = emit_text_place(s, doc, t, t.content);
                 code(s, 1, t.content);
+                emit_text_end(s, vertical);
             }
             for (const DocMText& m : b.mtexts) {
                 emit_mtext(m.block, m.content, m.props);
@@ -1850,23 +2016,27 @@ void serialize_body(std::string& s, const Document& doc, WriterRefs& refs) {
             for (const DocAttDef& a : b.attdefs) {
                 code(s, 0, "ATTDEF");
                 emit_props(s, doc, a.text.props);
-                emit_text_place(s, doc, a.text, a.text.content);
+                code(s, 100, "AcDbText");
+                const int vertical = emit_text_place(s, doc, a.text, a.text.content);
                 code(s, 1, a.def);            // default value
                 if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
                     code(s, 7, doc.text_styles[a.text.style].name);
                 } else if (!a.text.font.empty()) {
                     code(s, 7, a.text.font);
                 }
+                code(s, 100, "AcDbAttributeDefinition");
                 code(s, 3, a.prompt);         // prompt
                 code(s, 2, a.text.content);   // tag
                 code_i(s, 70, a.flags);       // 1 invisible, 2 constant, 4 verify, 8 preset
+                if (vertical != 0) {
+                    code_i(s, 74, vertical);
+                }
             }
             for (const DocInsert& in : b.inserts) {
                 emit_insert(in); // nested block reference
             }
-            code(s, 0, "ENDBLK");
-            emit_handle(s);
-            code(s, 8, "0");
+            g_owner = 0;
+            block_end(record, false);
         }
         code(s, 0, "ENDSEC");
     }
@@ -1879,9 +2049,6 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     const bool images = !(doc.images.empty() && doc.image_defs.empty());
     const bool mlines = !doc.mlines.empty() || !(doc.mline_styles.size() == 1 && doc.mline_styles[0] == MLineStyle{});
     const bool wipeouts = has_wipeouts(doc);
-    if (!images && !mlines && !wipeouts && refs.dim_assocs.empty()) {
-        return;
-    }
     // The named object dictionary, its ACAD_IMAGE_DICT, one IMAGEDEF per definition
     // and one IMAGEDEF_REACTOR per placed image -- the object web AutoCAD expects
     // around a raster -- and the ACAD_MLINESTYLE dictionary with the multiline styles.
@@ -1892,6 +2059,8 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
     code(s, 330, "0");
     code(s, 100, "AcDbDictionary");
     code_i(s, 281, 1);
+    code(s, 3, "ACAD_GROUP"); // groups are not written, but AutoCAD expects the dictionary
+    code(s, 350, handle_hex(kGroupDictHandle));
     if (mlines) {
         code(s, 3, "ACAD_MLINESTYLE");
         code(s, 350, handle_hex(kMlineStyleDictHandle));
@@ -1904,6 +2073,11 @@ void emit_objects(std::string& s, const Document& doc, const WriterRefs& refs) {
         code(s, 3, "ACAD_WIPEOUT_VARS");
         code(s, 350, handle_hex(kWipeoutVarsHandle));
     }
+    code(s, 0, "DICTIONARY");
+    code(s, 5, handle_hex(kGroupDictHandle));
+    code(s, 330, handle_hex(kRootDictHandle));
+    code(s, 100, "AcDbDictionary");
+    code_i(s, 281, 1);
     if (mlines) {
         code(s, 0, "DICTIONARY");
         code(s, 5, handle_hex(kMlineStyleDictHandle));
@@ -4184,13 +4358,24 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     const auto is_dimension_block = [](const std::string& name) {
         return name.size() > 2 && name[0] == '*' && (name[1] == 'D' || name[1] == 'd');
     };
+    // Those a dimension inside a user block draws with -- and those inserted by name, as Musa
+    // CAD writes a dimension inside a block (an INSERT of its drawn form).
     std::set<std::string> block_dimensions;
     {
         bool blocks = false;
+        bool entities = false;
         bool user_block = false;
         for (std::size_t k = 0; k + 1 < pairs.size(); ++k) {
             if (pairs[k].code == 2 && k > 0 && pairs[k - 1].code == 0 && pairs[k - 1].value == "SECTION") {
                 blocks = pairs[k].value == "BLOCKS";
+                entities = pairs[k].value == "ENTITIES";
+            } else if (entities && pairs[k].code == 0 && pairs[k].value == "INSERT") {
+                for (std::size_t j = k + 1; j < pairs.size() && pairs[j].code != 0; ++j) {
+                    if (pairs[j].code == 2) {
+                        block_dimensions.insert(pairs[j].value);
+                        break;
+                    }
+                }
             } else if (!blocks) {
                 continue;
             } else if (pairs[k].code == 0 && pairs[k].value == "BLOCK") {
@@ -4200,7 +4385,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                         break;
                     }
                 }
-            } else if (user_block && pairs[k].code == 0 && pairs[k].value == "DIMENSION") {
+            } else if (user_block && pairs[k].code == 0 && (pairs[k].value == "DIMENSION" || pairs[k].value == "INSERT")) {
                 for (std::size_t j = k + 1; j < pairs.size() && pairs[j].code != 0; ++j) {
                     if (pairs[j].code == 2) {
                         block_dimensions.insert(pairs[j].value);
@@ -4519,8 +4704,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     }
                 }
                 // A dimension's drawn form: Musa CAD draws dimensions from their own points,
-                // so it stays out unless a dimension inside a block needs it.
-                in_block = !is_dimension_block(block.name) || block_dimensions.contains(block.name);
+                // so it stays out unless a dimension inside a block needs it. The two spaces'
+                // blocks are not blocks to insert (their entities are in ENTITIES).
+                in_block = !is_space_block(block.name) &&
+                           (!is_dimension_block(block.name) || block_dimensions.contains(block.name));
             } else if (type == "ENDBLK") {
                 if (in_block) {
                     doc.block_defs.push_back(std::move(block));

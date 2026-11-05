@@ -45,7 +45,7 @@ TEST_CASE("#31 DXF writer: handles on every record, $HANDSEED, sections in order
     const std::string plain = serialize_dxf(doc);
     CHECK(plain.find("$HANDSEED") != std::string::npos);
     CHECK(plain.find("\nCLASSES\n") == std::string::npos);  // no images: no classes
-    CHECK(plain.find("\nOBJECTS\n") == std::string::npos);
+    CHECK(plain.find("\nOBJECTS\n") != std::string::npos); // the named object dictionary, always (#95)
     CHECK(plain.find("BLOCK_RECORD") != std::string::npos);
     CHECK(plain.find("*Model_Space") != std::string::npos);
     CHECK(plain.find("\nBLOCKS\n") < plain.find("\nENTITIES\n")); // blocks before entities

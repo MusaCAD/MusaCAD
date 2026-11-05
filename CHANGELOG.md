@@ -73,6 +73,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   or multileader as its lines and text (#93).
 - Opening a drawing no longer loads the blocks AutoCAD keeps for each dimension's drawn
   form (1,336 blocks down to 337 in one drawing) (#93).
+- **DXF files from Musa CAD open in AutoCAD-family programs, and Export DWG works with the
+  ODA File Converter** (#95). The files said they were AutoCAD 2000 but were laid out the
+  older way, without the owners and subclass markers that version reads by, and the
+  converter rejected every one. They now have AutoCAD 2000's structure throughout -- each
+  table record, entity, block and object -- and every drawing tried went to DWG and back with
+  each of its objects. Opening a DXF no longer adds two empty blocks, `*Model_Space` and
+  `*Paper_Space`, to the drawing, and a dimension inside a block keeps its drawn form when a
+  DXF Musa CAD wrote is opened again.
 - The built-in font's zero has no slash. Beside a diameter sign it read as one: `1.00`
   next to `Ø67.85` looked like `1.ØØ`. It is now an oval narrower than the O, as in
   AutoCAD's txt and simplex and in ISO lettering (#94).
