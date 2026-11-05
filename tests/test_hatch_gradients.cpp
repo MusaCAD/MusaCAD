@@ -33,6 +33,32 @@ using musacad::command::CommandProcessor;
 using Catch::Approx;
 
 namespace {
+template <class Pred>
+bool wait_until(GeometryEngine& e, Pred pred) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        e.consume_snapshot();
+        if (pred(e.snapshot())) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
+io::Document dump(GeometryEngine& engine, const char* name) {
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / name;
+    std::filesystem::remove(p);
+    engine.consume_snapshot();
+    const std::uint64_t before = engine.snapshot().document_version;
+    engine.submit(SaveDocumentCommand{p.string(), false});
+    REQUIRE(wait_until(engine, [&](const auto& s) { return s.document_version > before && !s.dirty; }));
+    io::Document doc;
+    REQUIRE(io::load_native(p.string(), doc).ok);
+    std::filesystem::remove(p);
+    return doc;
+}
+
 struct Out : CommandOutput {
     std::vector<std::string> lines;
     std::string prompt;
@@ -182,4 +208,124 @@ TEST_CASE("#41 HATCH's Gradient asks for the shape; a colour typed there keeps t
     h.run({""});
     // Back to linear: the shape is kept from one HATCH to the next, as the colours are.
     h.run({"HATCH", "G", "LINEAR", "255,255,255", "0", ""});
+}
+
+TEST_CASE("#41 HATCHEDIT's Style, Associative and Transparency") {
+    GeometryEngine engine;
+    engine.start();
+    // An area with an island, and an island in the island.
+    AddHatchCommand fill;
+    fill.loops = {{{0, 0}, {30, 0}, {30, 30}, {0, 30}},
+                  {{5, 5}, {25, 5}, {25, 25}, {5, 25}},
+                  {{10, 10}, {20, 10}, {20, 20}, {10, 20}}};
+    fill.group = 1;
+    engine.submit(fill);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+
+    HatchEditCommand outer{HatchEditCommand::Op::Style, {}, true, {}, 2};
+    outer.mode = 1;
+    engine.submit(outer);
+    io::Document doc = dump(engine, "musacad_hatch_style_outer.musa");
+    REQUIRE(doc.hatches[0].loops.size() == 2); // the island in the island left out
+    HatchEditCommand ignore{HatchEditCommand::Op::Style, {}, true, {}, 3};
+    ignore.mode = 2;
+    engine.submit(ignore);
+    doc = dump(engine, "musacad_hatch_style_ignore.musa");
+    REQUIRE(doc.hatches[0].loops.size() == 1); // the outer boundary alone
+    engine.submit(ignore);                      // nothing more to leave out
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status == "The hatch has no islands that style leaves out."; }));
+    engine.submit(UndoLastGroupCommand{});
+    doc = dump(engine, "musacad_hatch_style_undo.musa");
+    REQUIRE(doc.hatches[0].loops.size() == 2);
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
+
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Disassociate, {}, true, {}, 4});
+    doc = dump(engine, "musacad_hatch_assoc_off.musa");
+    REQUIRE(doc.hatches[0].unassoc);
+    engine.submit(HatchEditCommand{HatchEditCommand::Op::Associate, {}, true, {}, 5});
+    doc = dump(engine, "musacad_hatch_assoc_on.musa");
+    REQUIRE_FALSE(doc.hatches[0].unassoc);
+
+    HatchEditCommand clear{HatchEditCommand::Op::Transparency, {}, true, {}, 6};
+    clear.transparency = 40;
+    engine.submit(clear);
+    doc = dump(engine, "musacad_hatch_transparency.musa");
+    REQUIRE(doc.hatches[0].props.transparency == 40);
+    engine.stop();
+}
+
+TEST_CASE("#41 HATCHEDIT's Draw order: behind or in front of the boundary, to the back or the front") {
+    GeometryEngine engine;
+    engine.start();
+    const std::vector<Vec2> rect{{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    AddHatchCommand fill;
+    fill.loops = {rect};
+    fill.group = 1;
+    engine.submit(fill); // drawn first: under its boundary
+    AddPolylineCommand boundary{rect, true, 2};
+    engine.submit(boundary);
+    engine.submit(AddLineCommand{{50, 0}, {60, 0}, 3}); // elsewhere
+    const auto orders = [&](const io::Document& d) {
+        return std::pair{d.hatches.at(0).props.order, d.polylines.at(0).props.order};
+    };
+    const auto select_hatch = [&] {
+        engine.submit(SelectAllCommand{});
+        REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+        for (const EntityHandle h : engine.snapshot().selection) {
+            if (h.kind == EntityKind::Hatch) {
+                engine.submit(SelectHandleCommand{h});
+            }
+        }
+    };
+    select_hatch();
+    HatchEditCommand front{HatchEditCommand::Op::DrawOrder, {}, true, {}, 4};
+    front.mode = 4; // in front of the boundary
+    engine.submit(front);
+    io::Document doc = dump(engine, "musacad_hatch_order1.musa");
+    auto [h1, p1] = orders(doc);
+    REQUIRE(h1 > p1);
+    select_hatch();
+    HatchEditCommand behind{HatchEditCommand::Op::DrawOrder, {}, true, {}, 5};
+    behind.mode = 3;
+    engine.submit(behind);
+    doc = dump(engine, "musacad_hatch_order2.musa");
+    auto [h2, p2] = orders(doc);
+    REQUIRE(h2 < p2);
+    REQUIRE(h2 < doc.lines.at(0).props.order); // the line drawn last is still over it
+    select_hatch();
+    HatchEditCommand top{HatchEditCommand::Op::DrawOrder, {}, true, {}, 6};
+    top.mode = 2;
+    engine.submit(top);
+    doc = dump(engine, "musacad_hatch_order3.musa");
+    REQUIRE(doc.hatches.at(0).props.order > doc.lines.at(0).props.order);
+    engine.stop();
+}
+
+TEST_CASE("#41 HATCHEDIT's prompts for Style, DRaw order, ASsociative, Transparency and ANnotative") {
+    H h;
+    h.run({"HATCHEDIT", "5,5", "S"});
+    REQUIRE(h.out.prompt == "Enter hatching style [Ignore/Outer/Normal] <Normal>: ");
+    h.run({"O"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Style);
+    REQUIRE(h.last<HatchEditCommand>()->mode == 1);
+    h.run({"HATCHEDIT", "5,5", "DR", ""});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::DrawOrder);
+    REQUIRE(h.last<HatchEditCommand>()->mode == 3); // send beHind boundary
+    h.run({"HATCHEDIT", "5,5", "DR", "F"});
+    REQUIRE(h.last<HatchEditCommand>()->mode == 2);
+    h.run({"HATCHEDIT", "5,5", "AS", "N"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Disassociate);
+    h.run({"HATCHEDIT", "5,5", "AS", ""});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Associate);
+    h.run({"HATCHEDIT", "5,5", "T", "95"});
+    REQUIRE(h.out.lines.back() == "Enter a transparency from 0 to 90, ByLayer or ByBlock.");
+    h.run({"35"});
+    REQUIRE(h.last<HatchEditCommand>()->op == HatchEditCommand::Op::Transparency);
+    REQUIRE(h.last<HatchEditCommand>()->transparency == 35);
+    h.run({"HATCHEDIT", "5,5", "AN"});
+    REQUIRE(h.out.lines.back().find("#76") != std::string::npos);
+    REQUIRE(h.proc.has_active_command()); // the options again
+    h.proc.cancel();
 }

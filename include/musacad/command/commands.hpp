@@ -1945,7 +1945,8 @@ public:
 
 private:
     enum class Step : std::uint8_t { Pick, Option, Pattern, Scale, Angle, BoundaryType, Associate, UserAngle, UserSpacing, UserDouble, Color, Layer,
-                                     Origin, OriginPoint, OriginCorner, AddPick, RemovePick };
+                                     Origin, OriginPoint, OriginCorner, AddPick, RemovePick, Style, DrawOrder,
+                                     Associative, Transparency };
     double user_angle_ = 0.0;   ///< User defined: the lines' angle, degrees
     double user_spacing_ = 1.0; ///< and the distance between them
     void options(CommandContext& ctx);

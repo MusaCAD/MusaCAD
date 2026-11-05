@@ -27,6 +27,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   gradient's name works at the pattern prompt too. They plot as they show, and go to and come
   from DXF as AutoCAD's gradients. Gradients are drawn in twice as many steps as before, with
   no hairlines between them in a PDF.
+- **HATCHEDIT's Style, DRaw order, ASsociative and Transparency** (#41). Style
+  `[Ignore/Outer/Normal]` leaves out the islands the style does not fill; DRaw order sends the
+  hatch to the back or the front, or behind or in front of its boundary; ASsociative makes it
+  follow its boundary again (or not); Transparency sets its own. recreate Boundary's
+  `Associate hatch with new boundary?` now does what it says. ANnotative waits for annotation
+  scaling (#76).
 - **Hatch association in DXF** (#41): an associative hatch is written as one, each of its
   boundaries naming the objects it lies on, as AutoCAD writes them. Before, every hatch went
   out as not associative and came back that way.

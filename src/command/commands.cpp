@@ -21428,12 +21428,93 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         } else if (u == "R" || u == "REMOVE BOUNDARIES" || u == "REMOVE") {
             step_ = Step::RemovePick;
             ctx.set_prompt("Select Objects or [Add boundaries]: ");
+        } else if (u == "S" || u == "STYLE") {
+            step_ = Step::Style;
+            ctx.set_prompt("Enter hatching style [Ignore/Outer/Normal] <Normal>: ");
+        } else if (u == "DR" || u == "DRAW ORDER") {
+            step_ = Step::DrawOrder;
+            ctx.set_prompt("Enter draw order [do Not assign/send to Back/bring to Front/send beHind boundary/"
+                           "bring in front of bounDary] <send beHind boundary>: ");
+        } else if (u == "AS" || u == "ASSOCIATIVE") {
+            step_ = Step::Associative;
+            ctx.set_prompt("Enter associativity [Yes/No] <Yes>: ");
+        } else if (u == "T" || u == "TRANSPARENCY") {
+            step_ = Step::Transparency;
+            ctx.set_prompt("Enter transparency value [ByLayer/ByBlock] <ByLayer>: ");
+        } else if (u == "AN" || u == "ANNOTATIVE") {
+            ctx.echo("Annotative hatches come with annotation scaling (#76), which Musa CAD does not have yet.");
+            options(ctx);
         } else {
-            ctx.echo("That option is not available yet; Disassociate, Properties, ADd and Remove boundaries, recreate "
-                     "Boundary, separate Hatches, Origin, hatch COlor and LAyer are.");
+            ctx.echo("Invalid option keyword.");
             options(ctx);
         }
         return;
+    case Step::Style: {
+        // Normal keeps every island, Outer the outermost ones, Ignore none.
+        std::uint8_t mode = 0;
+        if (u == "I" || u == "IGNORE") {
+            mode = 2;
+        } else if (u == "O" || u == "OUTER") {
+            mode = 1;
+        } else if (!t.empty() && u != "N" && u != "NORMAL") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        core::HatchEditCommand c{core::HatchEditCommand::Op::Style, {}, true, {}, ctx.group_id()};
+        c.mode = mode;
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    case Step::DrawOrder: {
+        std::uint8_t mode = 3;
+        if (u == "N" || u == "DO NOT ASSIGN") {
+            mode = 0;
+        } else if (u == "B" || u == "SEND TO BACK") {
+            mode = 1;
+        } else if (u == "F" || u == "BRING TO FRONT") {
+            mode = 2;
+        } else if (u == "D" || u == "BRING IN FRONT OF BOUNDARY") {
+            mode = 4;
+        } else if (!t.empty() && u != "H" && u != "SEND BEHIND BOUNDARY") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        core::HatchEditCommand c{core::HatchEditCommand::Op::DrawOrder, {}, true, {}, ctx.group_id()};
+        c.mode = mode;
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
+    case Step::Associative:
+        if (t.empty() || u == "Y" || u == "YES") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Associate, {}, true, {}, ctx.group_id()});
+        } else if (u == "N" || u == "NO") {
+            ctx.submit(core::HatchEditCommand{core::HatchEditCommand::Op::Disassociate, {}, true, {}, ctx.group_id()});
+        } else {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        done_ = true;
+        return;
+    case Step::Transparency: {
+        std::uint8_t value = core::EntityProps::kTransparencyByLayer;
+        if (u == "B" || u == "BYBLOCK") {
+            value = core::EntityProps::kTransparencyByBlock;
+        } else if (!t.empty() && u != "L" && u != "BYLAYER") {
+            double v = 0.0;
+            if (!parse_number(t, v) || v < 0.0 || v > 90.0) {
+                ctx.echo("Enter a transparency from 0 to 90, ByLayer or ByBlock.");
+                return;
+            }
+            value = static_cast<std::uint8_t>(std::lround(v));
+        }
+        core::HatchEditCommand c{core::HatchEditCommand::Op::Transparency, {}, true, {}, ctx.group_id()};
+        c.transparency = value;
+        ctx.submit(std::move(c));
+        done_ = true;
+        return;
+    }
     case Step::Origin:
         if (u == "S" || u == "SET" || u == "SET NEW ORIGIN") {
             step_ = Step::OriginPoint;
@@ -21619,16 +21700,19 @@ void HatchEditUiCommand::input(CommandContext& ctx, const std::string& text) {
         step_ = Step::Associate;
         ctx.set_prompt("Associate hatch with new boundary? [Yes/No] <N>: ");
         return;
-    case Step::Associate:
-        if (u == "Y" || u == "YES") {
-            ctx.echo("Hatches here are not associative; the boundary is drawn alone.");
-        } else if (!t.empty() && u != "N" && u != "NO") {
+    case Step::Associate: {
+        // Yes: the hatch follows the boundary made round it; No: it does not follow anything.
+        const bool yes = u == "Y" || u == "YES";
+        if (!yes && !t.empty() && u != "N" && u != "NO") {
             ctx.echo("Enter Yes or No.");
             return;
         }
         ctx.submit(core::HatchBoundaryCommand{ctx.group_id()});
+        ctx.submit(core::HatchEditCommand{yes ? core::HatchEditCommand::Op::Associate : core::HatchEditCommand::Op::Disassociate,
+                                          {}, true, {}, ctx.group_id()});
         done_ = true;
         return;
+    }
     }
 }
 

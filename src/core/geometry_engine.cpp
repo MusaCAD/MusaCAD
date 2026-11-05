@@ -2361,10 +2361,46 @@ std::vector<io::DocDimRef> GeometryEngine::dim_refs_for_dxf() const {
     return out;
 }
 
-std::vector<io::DocHatchRef> GeometryEngine::hatch_refs_for_dxf() const {
-    std::vector<io::DocHatchRef> out;
+namespace {
+/// The objects each of `loops` lies on (a vertex at one of their grips or along them), in the
+/// order met, each once per loop -- a hatch's boundary objects, in `space`.
+std::vector<std::vector<EntityHandle>> objects_under(const GeometryStore& store, const SpatialGrid& grid,
+                                                     const NativeKernel2D& kernel,
+                                                     const std::vector<std::vector<Vec2>>& loops, std::uint8_t space) {
+    std::vector<std::vector<EntityHandle>> out(loops.size());
     std::vector<EntityHandle> cand;
     std::vector<Grip> grips;
+    for (std::size_t l = 0; l < loops.size(); ++l) {
+        std::vector<EntityHandle>& on = out[l];
+        for (const Vec2 p : loops[l]) {
+            const double tol = assoc_tol(p);
+            cand.clear();
+            grid.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
+            for (const EntityHandle c : cand) {
+                if (!assoc_target(c.kind) || !store.is_valid(c) || std::find(on.begin(), on.end(), c) != on.end()) {
+                    continue;
+                }
+                const EntityProps* cp = store.props(c);
+                if (cp == nullptr || cp->space() != space) {
+                    continue;
+                }
+                grips.clear();
+                grips_of(store, c, grips);
+                const bool at_grip =
+                    std::any_of(grips.begin(), grips.end(), [&](const Grip& g) { return distance(g.pos, p) <= tol; });
+                Vec2 q;
+                if (at_grip || (kernel.closest_point(store, c, p, q) && distance(q, p) <= tol)) {
+                    on.push_back(c);
+                }
+            }
+        }
+    }
+    return out;
+}
+} // namespace
+
+std::vector<io::DocHatchRef> GeometryEngine::hatch_refs_for_dxf() const {
+    std::vector<io::DocHatchRef> out;
     const auto& hatches = store_.hatches();
     std::uint32_t doc_index = 0; // the hatch's place in the Document: live ones in slot order
     for (std::uint32_t i = 0; i < hatches.slot_count(); ++i) {
@@ -2376,35 +2412,10 @@ std::vector<io::DocHatchRef> GeometryEngine::hatch_refs_for_dxf() const {
         if (hd.unassoc) {
             continue;
         }
-        const std::vector<std::vector<Vec2>> loops = store_.hatch_loops(hd);
-        for (std::uint32_t l = 0; l < loops.size(); ++l) {
-            // The objects a vertex of the loop is on (at one of their grips or along them), in
-            // the order met; each once.
-            std::vector<EntityHandle> on;
-            for (const Vec2 p : loops[l]) {
-                const double tol = assoc_tol(p);
-                cand.clear();
-                grid_.query({p.x - tol, p.y - tol}, {p.x + tol, p.y + tol}, cand);
-                for (const EntityHandle c : cand) {
-                    if (!assoc_target(c.kind) || !store_.is_valid(c) ||
-                        std::find(on.begin(), on.end(), c) != on.end()) {
-                        continue;
-                    }
-                    const EntityProps* cp = store_.props(c);
-                    if (cp == nullptr || cp->space() != hd.props.space()) {
-                        continue;
-                    }
-                    grips.clear();
-                    grips_of(store_, c, grips);
-                    const bool at_grip = std::any_of(grips.begin(), grips.end(),
-                                                     [&](const Grip& g) { return distance(g.pos, p) <= tol; });
-                    Vec2 q;
-                    if (at_grip || (kernel_.closest_point(store_, c, p, q) && distance(q, p) <= tol)) {
-                        on.push_back(c);
-                    }
-                }
-            }
-            for (const EntityHandle c : on) {
+        const std::vector<std::vector<EntityHandle>> under =
+            objects_under(store_, grid_, kernel_, store_.hatch_loops(hd), hd.props.space());
+        for (std::uint32_t l = 0; l < under.size(); ++l) {
+            for (const EntityHandle c : under[l]) {
                 out.push_back({hi, l, static_cast<std::uint8_t>(c.kind), io::document_index(store_, c)});
             }
         }
@@ -3247,6 +3258,57 @@ std::vector<std::vector<std::vector<Vec2>>> hatch_areas(const std::vector<std::v
 void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     using Op = HatchEditCommand::Op;
     prune_selection();
+    if (c.op == Op::DrawOrder) {
+        // Draw order: the hatches to the back or the front, or behind or in front of the objects
+        // their boundaries lie on (DRAWORDER's Under / Above, those objects the reference).
+        std::vector<EntityHandle> hatches;
+        for (const EntityHandle h : selection_) {
+            if (h.kind == EntityKind::Hatch && store_.is_valid(h) && selectable(h) && !store_.is_wipeout(h)) {
+                hatches.push_back(h);
+            }
+        }
+        if (hatches.empty()) {
+            report("No hatch selected.");
+            return;
+        }
+        if (c.mode == 0) {
+            return; // Do not assign
+        }
+        const std::vector<EntityHandle> was = selection_;
+        if (c.mode <= 2) {
+            selection_ = hatches;
+            apply_draw_order(DrawOrderCommand{c.mode == 1 ? DrawOrderCommand::Op::Back : DrawOrderCommand::Op::Front,
+                                              7, c.group});
+            selection_ = was;
+            return;
+        }
+        std::vector<EntityHandle> boundary;
+        for (const EntityHandle h : hatches) {
+            const HatchData* hd = store_.hatch(h);
+            if (hd == nullptr) {
+                continue;
+            }
+            for (const std::vector<EntityHandle>& loop :
+                 objects_under(store_, grid_, kernel_, store_.hatch_loops(*hd), hd->props.space())) {
+                for (const EntityHandle o : loop) {
+                    if (std::find(boundary.begin(), boundary.end(), o) == boundary.end() &&
+                        std::find(hatches.begin(), hatches.end(), o) == hatches.end()) {
+                        boundary.push_back(o);
+                    }
+                }
+            }
+        }
+        if (boundary.empty()) {
+            report("The hatch has no boundary objects to go behind or in front of.");
+            return;
+        }
+        draworder_moving_ = hatches;
+        selection_ = boundary;
+        apply_draw_order(DrawOrderCommand{c.mode == 3 ? DrawOrderCommand::Op::Under : DrawOrderCommand::Op::Above, 7,
+                                          c.group});
+        selection_ = was;
+        return;
+    }
     std::uint16_t layer = store_.current_layer();
     if (c.op == Op::Layer && !c.layer.empty()) {
         const auto lower = [](std::string s) {
@@ -3283,6 +3345,45 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
             x.unassoc = true;
             made.push_back(x);
             break;
+        case Op::Associate:
+            x.unassoc = false;
+            made.push_back(x);
+            break;
+        case Op::Transparency:
+            props.transparency = c.transparency;
+            x.props = props;
+            made.push_back(x);
+            break;
+        case Op::Style: {
+            // The islands a style keeps: a loop inside k others is k deep; Outer keeps those one
+            // deep, Ignore none (Normal leaves the hatch as it is).
+            if (c.mode == 0) {
+                keep.push_back(h);
+                continue;
+            }
+            const std::size_t deepest = c.mode == 1 ? 1 : 0;
+            std::vector<std::vector<Vec2>> kept;
+            for (std::size_t i = 0; i < x.loops.size(); ++i) {
+                std::size_t depth = 0;
+                for (std::size_t j = 0; j < x.loops.size(); ++j) {
+                    if (j != i && !x.loops[i].empty() && hatch::point_in_loops({x.loops[j]}, x.loops[i].front())) {
+                        ++depth;
+                    }
+                }
+                if (depth <= deepest) {
+                    kept.push_back(x.loops[i]);
+                }
+            }
+            if (kept.size() == x.loops.size() || kept.empty()) {
+                keep.push_back(h);
+                continue;
+            }
+            x.loops = std::move(kept);
+            made.push_back(x);
+            break;
+        }
+        case Op::DrawOrder:
+            break; // above
         case Op::Color:
             props.set_color_by_layer(c.by_layer);
             if (!c.by_layer) {
@@ -3382,6 +3483,7 @@ void GeometryEngine::apply_hatch_edit(const HatchEditCommand& c) {
     selection_ = keep;
     if (edited == 0) {
         report(c.op == Op::Separate           ? "Nothing to separate: the hatch has one area."
+               : c.op == Op::Style            ? "The hatch has no islands that style leaves out."
                : c.op == Op::AddAreas         ? "Valid hatch boundary not found."
                : c.op == Op::RemoveBoundaries ? "No boundary of the hatch there."
                                               : "No hatch selected.");

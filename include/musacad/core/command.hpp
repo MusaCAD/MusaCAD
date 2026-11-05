@@ -1231,7 +1231,23 @@ struct HatchEditCommand {
     /// right, 5 centre) that point of the boundary's extents. AddAreas: the areas around
     /// `points` (as HATCH picks them) added; RemoveBoundaries: the boundary of the hatch nearest
     /// each of `points`, within `radius`, taken out (one is always left).
-    enum class Op : std::uint8_t { Disassociate, Separate, Color, Layer, Origin, AddAreas, RemoveBoundaries };
+    /// Associate: associative again. Transparency: `transparency` (0..90, or EntityProps'
+    /// ByLayer / ByBlock). Style: the islands kept by `mode` -- 0 Normal (all), 1 Outer (the
+    /// outermost ones), 2 Ignore (none). DrawOrder by `mode`: 1 to the back, 2 to the front,
+    /// 3 behind the objects the boundary lies on, 4 in front of them.
+    enum class Op : std::uint8_t {
+        Disassociate,
+        Separate,
+        Color,
+        Layer,
+        Origin,
+        AddAreas,
+        RemoveBoundaries,
+        Associate,
+        Transparency,
+        Style,
+        DrawOrder,
+    };
     Op op = Op::Disassociate;
     Rgb color{};
     bool by_layer = true;
@@ -1241,6 +1257,8 @@ struct HatchEditCommand {
     std::uint8_t origin_corner = 0;
     std::vector<Vec2> points{};
     double radius = 0.0;
+    std::uint8_t mode = 0;
+    std::uint8_t transparency = EntityProps::kTransparencyByLayer;
 };
 
 /// BLOCKREPLACE: every reference of block `from` (nested ones in other blocks too) made a
