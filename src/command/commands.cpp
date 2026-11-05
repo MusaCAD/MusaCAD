@@ -20,6 +20,7 @@
 #include "musacad/core/image.hpp"
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
@@ -16712,7 +16713,7 @@ void MLeaderCommand::start(CommandContext& ctx) {
     style_ = cur < styles.size() ? styles[cur] : core::MLeaderStyle{};
     style_index_ = cur < styles.size() ? cur : std::uint16_t{0};
     s_max_points_ = style_.max_points;
-    s_content_ = style_.text;
+    s_content_ = style_.text && !s_block_content_; // a block chosen last time stays the content
     s_landing_ = style_.landing;
     s_leader_type_ = style_.leader_type;
     first_prompt(ctx);
@@ -16759,6 +16760,31 @@ void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     if (s_landing_) {
         v.push_back(v.back() + core::Vec2{side * style_.landing_distance, 0.0}); // the horizontal landing
     }
+    using F = core::LeaderForm;
+    if (s_block_content_) {
+        // Block content: the block against the landing, its attribute values asked first.
+        block_cmd_ = core::AddBlockMLeaderCommand{};
+        block_cmd_.vertices = std::move(v);
+        block_cmd_.block = s_block_;
+        block_cmd_.scale = h;
+        block_cmd_.style = ctx.current_dim_style();
+        block_cmd_.overrides.arrow_type = style_.arrow;
+        block_cmd_.overrides.arrow_size = style_.arrow_size;
+        block_cmd_.overrides.set(core::DimOverrides::kArrowType, true);
+        block_cmd_.overrides.set(core::DimOverrides::kArrowSize, true);
+        block_cmd_.leader_flags = static_cast<std::uint8_t>(
+            (s_leader_type_ == 1 ? F::kSpline : s_leader_type_ == 2 ? F::kNoLine : 0) | (s_landing_ ? F::kLanding : 0));
+        block_cmd_.mlstyle = style_index_;
+        attdefs_ = ctx.block_attdefs(s_block_);
+        if (attdefs_.empty()) {
+            attdefs_ = core::standard_tag_attdefs(s_block_);
+        }
+        if (!attdefs_.empty()) {
+            ctx.echo("Enter attribute values");
+        }
+        next_attrib(ctx);
+        return;
+    }
     core::MTextBlock b;
     b.height = h;
     b.attach = right ? 3 : 5; // middle left / middle right, a gap beyond the landing
@@ -16768,7 +16794,6 @@ void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     c.overrides.arrow_size = style_.arrow_size;
     c.overrides.set(core::DimOverrides::kArrowType, true);
     c.overrides.set(core::DimOverrides::kArrowSize, true);
-    using F = core::LeaderForm;
     c.leader_flags = static_cast<std::uint8_t>((s_leader_type_ == 1 ? F::kSpline : s_leader_type_ == 2 ? F::kNoLine : 0) |
                                                (s_landing_ ? F::kLanding : 0));
     c.mlstyle = style_index_;
@@ -16777,10 +16802,54 @@ void MLeaderCommand::finish(CommandContext& ctx, const std::string& text) {
     done_ = true;
 }
 
+void MLeaderCommand::next_attrib(CommandContext& ctx) {
+    const std::size_t i = block_cmd_.values.size();
+    if (i < attdefs_.size()) {
+        state_ = State::Attrib;
+        const core::BlockAttDefInfo& a = attdefs_[i];
+        ctx.set_prompt(a.prompt.empty() ? a.tag + " <" + a.def + ">: " : a.prompt + " <" + a.def + ">: ");
+        return;
+    }
+    block_cmd_.group = ctx.group_id();
+    ctx.submit(block_cmd_);
+    done_ = true;
+}
+
 void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
     switch (state_) {
+    case State::Attrib:
+        // Enter keeps the default, as INSERT asks them.
+        block_cmd_.values.push_back(text.empty() ? attdefs_[block_cmd_.values.size()].def : text);
+        next_attrib(ctx);
+        return;
+    case State::BlockName:
+        if (t == "?") {
+            std::string list;
+            for (const std::string_view n : core::kStandardTagBlocks) {
+                list += (list.empty() ? "" : ", ") + std::string(n);
+            }
+            ctx.echo(list + ", or a block of the drawing.");
+            return;
+        }
+        if (!t.empty()) {
+            if (core::standard_tag_block_name(t).empty() && ctx.block_attdefs(t).empty()) {
+                const std::vector<std::string> names = ctx.block_names();
+                if (std::none_of(names.begin(), names.end(), [&](const std::string& n) { return core::same_table_name(n, t); })) {
+                    ctx.echo("Block \"" + t + "\" not found.");
+                    return;
+                }
+            }
+            const std::string_view standard = core::standard_tag_block_name(t);
+            s_block_ = standard.empty() ? t : std::string(standard);
+        }
+        s_block_content_ = true;
+        s_content_ = false;
+        state_ = State::Options;
+        ctx.set_prompt("Enter an option [Leader type/leader lAnding/Content type/Maxpoints/First angle/Second "
+                       "angle/eXit options] <eXit options>: ");
+        return;
     case State::First:
         if (t.empty() || u == "O" || u == "OPTIONS") {
             state_ = State::Options;
@@ -16882,7 +16951,8 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
                            (s_max_points_ == 0 ? std::string("No limit") : std::to_string(s_max_points_)) + ">: ");
         } else if (u == "C" || u == "CONTENT TYPE") {
             state_ = State::ContentType;
-            ctx.set_prompt(std::string("Select a content type [Mtext/None] <") + (s_content_ ? "Mtext" : "None") + ">: ");
+            ctx.set_prompt(std::string("Select a content type [Block/Mtext/None] <") +
+                           (s_block_content_ ? "Block" : s_content_ ? "Mtext" : "None") + ">: ");
         } else if (u == "L" || u == "LEADER TYPE") {
             state_ = State::LeaderType;
             ctx.set_prompt(std::string("Select a leader type [Straight/sPline/None] <") +
@@ -16916,13 +16986,18 @@ void MLeaderCommand::input(CommandContext& ctx, const std::string& text) {
         if (state_ == State::ContentType) {
             if (u == "N" || u == "NONE") {
                 s_content_ = false;
+                s_block_content_ = false;
             } else if (t.empty() || u == "M" || u == "MTEXT") {
-                s_content_ = t.empty() ? s_content_ : true;
+                if (!t.empty()) {
+                    s_content_ = true;
+                    s_block_content_ = false;
+                }
             } else if (u == "B" || u == "BLOCK") {
-                ctx.echo("Block content is not available yet.");
+                state_ = State::BlockName;
+                ctx.set_prompt("Enter block name or [?] <" + s_block_ + ">: ");
                 return;
             } else {
-                ctx.echo("Enter Mtext or None.");
+                ctx.echo("Enter Block, Mtext or None.");
                 return;
             }
         } else if (state_ == State::LeaderType) {

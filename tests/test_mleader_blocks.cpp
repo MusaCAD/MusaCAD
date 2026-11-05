@@ -55,6 +55,33 @@ io::Document dump(GeometryEngine& engine, const char* name) {
     return doc;
 }
 
+struct Out : CommandOutput {
+    std::vector<std::string> lines;
+    std::string prompt;
+    void append_line(const std::string& l) override { lines.push_back(l); }
+    void set_prompt(const std::string& p) override { prompt = p; }
+};
+
+struct H {
+    std::vector<Command> cmds;
+    Out out;
+    CommandProcessor proc{[this](Command c) { cmds.push_back(std::move(c)); }, nullptr, out};
+    void run(std::initializer_list<const char*> lines) {
+        for (const char* l : lines) {
+            proc.submit_line(l);
+        }
+    }
+    template <class T>
+    [[nodiscard]] const T* last() const {
+        for (auto it = cmds.rbegin(); it != cmds.rend(); ++it) {
+            if (const auto* c = std::get_if<T>(&*it)) {
+                return c;
+            }
+        }
+        return nullptr;
+    }
+};
+
 /// A balloon from `tip` with its landing ending at `end`, numbered `n`.
 AddBlockMLeaderCommand balloon(Vec2 tip, Vec2 end, const char* n, std::uint64_t group) {
     AddBlockMLeaderCommand c;
@@ -67,6 +94,32 @@ AddBlockMLeaderCommand balloon(Vec2 tip, Vec2 end, const char* n, std::uint64_t 
     return c;
 }
 } // namespace
+
+TEST_CASE("#61 MLEADER's Content type Block asks for the block, then its attribute values") {
+    H h;
+    h.run({"MLEADER", "O", "C"});
+    REQUIRE(h.out.prompt == "Select a content type [Block/Mtext/None] <Mtext>: ");
+    h.run({"B"});
+    REQUIRE(h.out.prompt == "Enter block name or [?] <_TagCircle>: ");
+    h.run({"?"});
+    REQUIRE(h.out.lines.back().find("_TagHexagon") != std::string::npos);
+    h.run({"NOSUCH"});
+    REQUIRE(h.out.lines.back() == "Block \"NOSUCH\" not found.");
+    h.run({"_taghexagon", "X", "0,0", "10,5"});
+    REQUIRE(h.out.prompt == "Enter tag number <TAGNUMBER>: ");
+    h.run({"12"});
+    const auto* c = h.last<AddBlockMLeaderCommand>();
+    REQUIRE(c != nullptr);
+    REQUIRE(c->block == "_TagHexagon");
+    REQUIRE(c->values == std::vector<std::string>{"12"});
+    REQUIRE(c->vertices.front() == Vec2{0, 0});
+    REQUIRE_FALSE(h.proc.has_active_command());
+    // The content type stays Block for the next one, as AutoCAD keeps it.
+    h.run({"MLEADER", "0,0", "10,5", ""});
+    REQUIRE(h.last<AddBlockMLeaderCommand>()->values == std::vector<std::string>{"TAGNUMBER"});
+    h.run({"MLEADER", "O", "C", "M", "X", "0,0", "10,5", "NOTE"});
+    REQUIRE(h.last<AddMLeaderCommand>()->content == "NOTE");
+}
 
 TEST_CASE("#61 a balloon: the tag block added to the drawing, against the landing, kept in the file") {
     GeometryEngine engine;

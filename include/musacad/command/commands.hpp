@@ -5003,11 +5003,14 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    bool free_text() const override { return state_ == State::Text; }
+    bool free_text() const override { return state_ == State::Text || state_ == State::Attrib; }
 
 private:
     enum class Order : std::uint8_t { Arrow, Landing, Content };
-    enum class State : std::uint8_t { First, Next, Landing, Arrow, Text, Options, MaxPoints, ContentType, LeaderType, UseLanding };
+    enum class State : std::uint8_t { First, Next, Landing, Arrow, Text, Options, MaxPoints, ContentType, LeaderType, UseLanding,
+                                      BlockName, Attrib };
+    /// Block content (#61): the next attribute's prompt, or the multileader made.
+    void next_attrib(CommandContext& ctx);
     void first_prompt(CommandContext& ctx);
     void after_points(CommandContext& ctx);
     void finish(CommandContext& ctx, const std::string& text);
@@ -5021,6 +5024,10 @@ private:
     static inline bool s_content_ = true;
     static inline bool s_landing_ = true;
     static inline int s_leader_type_ = 0; ///< Leader type: 0 Straight, 1 sPline, 2 None
+    static inline bool s_block_content_ = false;          ///< Content type Block (#61)
+    static inline std::string s_block_ = "_TagCircle";    ///< ... and its block
+    core::AddBlockMLeaderCommand block_cmd_{};            ///< the multileader, its values being asked
+    std::vector<core::BlockAttDefInfo> attdefs_;
     core::MLeaderStyle style_{}; ///< the current multileader style, taken at the start
     std::uint16_t style_index_ = 0; ///< ... and which it is (the multileader follows it)
 };
