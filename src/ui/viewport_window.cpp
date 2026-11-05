@@ -48,6 +48,7 @@
 #include <QPolygon>
 #include <QMenu>
 #include <QOpenGLContext>
+#include <QPlatformSurfaceEvent>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QImage>
@@ -1426,8 +1427,40 @@ void ViewportWindow::update_viewport_size() noexcept {
 void ViewportWindow::exposeEvent(QExposeEvent*) {
     if (isExposed()) {
         update_viewport_size();
+        unpark_render_thread();
         start_render_thread();
+    } else {
+        // Hidden -- the window closing, minimized: the platform may take the surface away as
+        // soon as this returns (Wayland destroys it on hide), and a frame swapped into it then
+        // crashed in the driver (#97). The render thread finishes its frame and waits.
+        park_render_thread();
     }
+}
+
+bool ViewportWindow::event(QEvent* e) {
+    if (e->type() == QEvent::PlatformSurface &&
+        static_cast<QPlatformSurfaceEvent*>(e)->surfaceEventType() ==
+            QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
+        park_render_thread(); // never render into a surface that is going away (#97)
+    }
+    return QWindow::event(e);
+}
+
+void ViewportWindow::park_render_thread() noexcept {
+    std::unique_lock lock(park_mutex_);
+    park_requested_ = true;
+    park_cv_.notify_all();
+    // The frame in hand is finished first. A driver that blocks a swap while the window is
+    // hidden must not hang the interface: after a second it goes on without the thread.
+    park_cv_.wait_for(lock, std::chrono::seconds(1), [this] { return parked_ || !render_running_; });
+}
+
+void ViewportWindow::unpark_render_thread() noexcept {
+    {
+        std::scoped_lock lock(park_mutex_);
+        park_requested_ = false;
+    }
+    park_cv_.notify_all();
 }
 
 void ViewportWindow::resizeEvent(QResizeEvent*) { update_viewport_size(); }
@@ -1443,6 +1476,10 @@ void ViewportWindow::start_render_thread() {
 void ViewportWindow::stop_render_thread() noexcept {
     if (render_thread_.joinable()) {
         render_thread_.request_stop();
+        {
+            std::scoped_lock lock(park_mutex_); // a parked thread sees the stop as it wakes
+        }
+        park_cv_.notify_all();
         render_thread_.join();
     }
 }
@@ -1474,6 +1511,27 @@ QString ViewportWindow::gl_requirement_message(int major, int minor, const QStri
 }
 
 void ViewportWindow::render_loop(core::threading::stop_token token) {
+    // Running, for park_render_thread(): false again, and whoever waits told, however this
+    // thread ends.
+    {
+        std::scoped_lock lock(park_mutex_);
+        render_running_ = true;
+    }
+    struct Running {
+        ViewportWindow* w;
+        explicit Running(ViewportWindow* win) : w(win) {}
+        Running(const Running&) = delete;
+        Running& operator=(const Running&) = delete;
+        ~Running() {
+            {
+                std::scoped_lock lock(w->park_mutex_);
+                w->render_running_ = false;
+                w->parked_ = false;
+            }
+            w->park_cv_.notify_all();
+        }
+    } running{this};
+
     // The render thread exclusively owns the GL context.
     QOpenGLContext context;
     context.setFormat(format());
@@ -1560,7 +1618,33 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
     double lat_max = 0.0;
     int lat_n = 0;
 
+    bool current = true; // the context bound to the window's surface
     while (!token.stop_requested()) {
+        // The window hidden: let go of its surface, which the platform may now destroy, and
+        // wait to be shown again (#97). The surface then may be a new one: bind it afresh.
+        {
+            std::unique_lock lock(park_mutex_);
+            if (park_requested_) {
+                context.doneCurrent();
+                current = false;
+                parked_ = true;
+                park_cv_.notify_all();
+                park_cv_.wait(lock, [&] { return !park_requested_ || token.stop_requested(); });
+                parked_ = false;
+            }
+        }
+        if (token.stop_requested()) {
+            break;
+        }
+        if (!current) {
+            if (!context.makeCurrent(this)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // not ready yet
+                continue;
+            }
+            current = true;
+            paced = false; // the refresh is measured again
+            refresh_anchor = clock::now();
+        }
         if (pacing_enabled && paced) {
             // Safety margin before the refresh: the recent worst render time with
             // headroom, never under 2 ms (sleep_until jitter) nor over half a period. A

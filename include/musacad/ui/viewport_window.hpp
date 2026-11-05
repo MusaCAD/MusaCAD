@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <limits>
 #include <functional>
 #include <mutex>
@@ -729,6 +730,7 @@ public:
     }
 
 protected:
+    bool event(QEvent* event) override; // the surface going away stops the render thread
     void exposeEvent(QExposeEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -1136,6 +1138,17 @@ private:
     bool has_initial_view_ = false;
     render::Vec2 init_min_{};
     render::Vec2 init_max_{};
+
+    // While the window is hidden the render thread is parked, its context released from the
+    // surface, which the platform may destroy (#97). GUI thread: `park_requested_`; render
+    // thread: `parked_` and `render_running_`. All under park_mutex_.
+    void park_render_thread() noexcept;
+    void unpark_render_thread() noexcept;
+    std::mutex park_mutex_;
+    std::condition_variable park_cv_;
+    bool park_requested_ = false;
+    bool parked_ = false;
+    bool render_running_ = false;
 
     core::threading::jthread render_thread_;
 };

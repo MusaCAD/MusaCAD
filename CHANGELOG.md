@@ -151,7 +151,12 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - A `Ø` typed into text, and AutoCAD's `\U+2205`, draw the diameter sign in the built-in
   font; they were left blank, so `Ø250 THRU` read `250 THRU` (#94).
 - **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
-- Closing the window read the Dynamic Input settings from freed memory (#87).
+- **Musa CAD no longer crashes when it closes** (#87, #97). Closing the window read the
+  Dynamic Input settings from freed memory -- on some systems a crash on every exit, and the
+  "closed unexpectedly" report on the next start -- and, on Wayland, the viewport could still
+  be drawing into the window's surface after closing had destroyed it. The viewport now stops
+  drawing while its window is hidden (closing or minimized) and picks up again when it is
+  shown.
 - **Clicked points work with a decimal comma** (#96). Under a locale that writes 1,5 for
   1.5 (es_CO, de_DE, fr_FR ...), a point picked in the drawing reached the command as
   `51,19483418,44,51084184` -- four numbers -- so no pick was taken ("Malformed coordinate").
