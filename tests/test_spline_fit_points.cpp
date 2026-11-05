@@ -126,8 +126,10 @@ TEST_CASE("SPLINE's Fit method keeps the points it fits; by control vertices, no
     sp = h.last<AddSplineCommand>();
     REQUIRE(sp->fit.closed);
     REQUIRE(sp->fit.points.size() == 4); // the first not repeated
-    // The same rule draws it again: the control points from the fit data.
-    REQUIRE(spline::fit_spline(sp->fit.points, 3, spline::FitParam::Chord, sp->fit.tolerance, true, std::nullopt,
+    // The same rule draws it again: the control points from the fit data (with the degree and
+    // knot spacing SPLINE had, which it remembers from an earlier test's run).
+    REQUIRE(spline::fit_spline(sp->fit.points, static_cast<int>(sp->degree),
+                               static_cast<spline::FitParam>(sp->fit.knots), sp->fit.tolerance, true, std::nullopt,
                                std::nullopt) == sp->control_points);
     h.run({"SPLINE", "M", "CV", "0,0", "10,10", "20,0", ""});
     REQUIRE(h.last<AddSplineCommand>()->fit.empty());
