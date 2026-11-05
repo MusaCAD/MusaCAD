@@ -14,6 +14,7 @@
 #include "musacad/command/coordinate.hpp"
 #include "musacad/command/snap_keywords.hpp"
 #include "musacad/core/crash_report.hpp"
+#include "musacad/core/text/parse_double.hpp"
 #include "musacad/core/units.hpp"
 
 namespace musacad::command {
@@ -592,10 +593,11 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
         }
     }
     const core::Vec2 p = resolve_pick(world, snap);
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%.10g,%.10g", p.x, p.y);
+    // Written with a '.' whatever the locale: in es_CO "%.10g,%.10g" made "51,19,44,51" of
+    // (51.19, 44.51), which no coordinate parser can read back (#96).
+    const std::string text = core::format_double_g(p.x, 10) + "," + core::format_double_g(p.y, 10);
     feeding_pick_ = true;
-    submit_line(buf); // feed as an absolute coordinate to the active command
+    submit_line(text); // feed as an absolute coordinate to the active command
     feeding_pick_ = false;
 }
 

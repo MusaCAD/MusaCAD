@@ -152,6 +152,11 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   font; they were left blank, so `Ø250 THRU` read `250 THRU` (#94).
 - **Ctrl+Y** redoes on Linux too (it was Ctrl+Shift+Z only) (#85).
 - Closing the window read the Dynamic Input settings from freed memory (#87).
+- **Clicked points work with a decimal comma** (#96). Under a locale that writes 1,5 for
+  1.5 (es_CO, de_DE, fr_FR ...), a point picked in the drawing reached the command as
+  `51,19483418,44,51084184` -- four numbers -- so no pick was taken ("Malformed coordinate").
+  Musa CAD now passes numbers between its own parts with a '.', whatever the locale; what
+  you type is read as before.
 - Prompt defaults that are what Enter does: FILLET and CHAMFER's Trim mode, POLYGON's
   Inscribed / Circumscribed, MLEADER's leader type, a dimension's Text, ARRAY's angles (360
   for a full circle), STRETCH's displacement (the last one); PLINE's Close works from the

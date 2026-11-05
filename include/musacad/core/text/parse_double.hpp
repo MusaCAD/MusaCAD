@@ -80,4 +80,13 @@ inline bool parse_double_all(std::string_view s, double& out) noexcept {
     return r.ok && r.ptr == s.data() + s.size();
 }
 
+/// `v` as printf's "%.<precision>g" writes it, but always with a '.': printf follows the C
+/// locale, which QApplication sets to the user's (a comma in es_CO or de_DE), and a number
+/// written that way does not read back as one (#96).
+inline std::string format_double_g(double v, int precision) {
+    char buf[64];
+    const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, precision);
+    return ec == std::errc{} ? std::string(buf, ptr) : std::string("0");
+}
+
 } // namespace musacad::core

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include <algorithm>
+#include <clocale>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -38,6 +39,13 @@ void note_qt_message(QtMsgType type, const QMessageLogContext& context, const QS
         g_previous_message_handler(type, context, message);
     }
 }
+
+/// Numbers in the C library back to the '.' form (#96). On Unix QCoreApplication sets the C
+/// locale to the user's, so printf("%g"), std::to_string and strtod write and read "51,19" in
+/// es_CO or de_DE -- and a picked point "51,19,44,51" is four numbers, not two. Qt's own
+/// number formatting (QLocale) does not depend on it. Qt's documentation asks for exactly this
+/// right after the application object is made.
+void keep_c_numbers() { std::setlocale(LC_NUMERIC, "C"); }
 
 /// Rebuild an argv for Qt from the arguments the CLI parser did not claim.
 std::vector<char*> qt_argv(const std::vector<std::string>& args) {
@@ -107,6 +115,7 @@ int main(int argc, char* argv[]) {
         std::vector<char*> pargv = qt_argv(opts.qt_args);
         int pargc = static_cast<int>(pargv.size());
         QGuiApplication gui(pargc, pargv.data());
+        keep_c_numbers();
         std::string error;
         const int rc = run_plot(opts, error);
         if (rc != kExitOk) {
@@ -138,6 +147,7 @@ int main(int argc, char* argv[]) {
         std::vector<char*> dargv = qt_argv(opts.qt_args);
         int dargc = static_cast<int>(dargv.size());
         QApplication app(dargc, dargv.data());
+        keep_c_numbers();
         QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
         QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
         std::string error;
@@ -155,6 +165,7 @@ int main(int argc, char* argv[]) {
     std::vector<char*> qargv = qt_argv(opts.qt_args);
     int qargc = static_cast<int>(qargv.size());
     QApplication app(qargc, qargv.data());
+    keep_c_numbers();
     QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
     QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
     // The installed desktop entry (org.musacad.MusaCAD.desktop): on Wayland this is the
