@@ -1924,6 +1924,21 @@ struct AlignSpaceCommand {
     std::optional<Vec2> paper2;
     std::uint64_t group = 0;
 };
+/// ARCTEXT (Express Tools, #77): `content` along the arc under `pick` -- each character a
+/// text of its own, turned to the arc, `height` high and `offset` off it: outside the arc
+/// reading clockwise, or `inward` inside it reading the other way; spread over the arc (`align`
+/// 0, Fit) or set from its start (1), its end (2) or its middle (3). The characters are made a
+/// group. One undo step.
+struct ArcTextCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::string content;
+    double height = 2.5;
+    double offset = 0.0;
+    bool inward = false;
+    std::uint8_t align = 0;
+    std::uint64_t group = 0;
+};
 struct VpSyncCommand {
     Vec2 master{};
     double pick_radius = 0.0;
@@ -2641,7 +2656,7 @@ using Command =
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  TransformPreviewCommand, AddCircleTangentCommand, FilletPolylineCommand, HatchPreviewCommand,
-                 AddBlockMLeaderCommand, CollectMLeadersCommand, AlignSpaceCommand,
+                 AddBlockMLeaderCommand, CollectMLeadersCommand, AlignSpaceCommand, ArcTextCommand,
                  XlineOffsetCommand, XlineReferenceCommand, SetMirrtextCommand, DimAssocCommand, DimGripMenuCommand, ArrayPreviewCommand, AddPatternCommand, HatchEditCommand, ReplaceBlockCommand, AttSyncCommand, DrawOrderCommand, SetLayerFiltersCommand,
                  SetCurrentPropsCommand,
                  ChamferPolylineCommand,

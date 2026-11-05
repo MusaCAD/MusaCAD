@@ -10151,6 +10151,81 @@ void GeometryEngine::apply_vpsync(const VpSyncCommand& c) {
     report(std::to_string(renewed.size()) + (renewed.size() == 1 ? " viewport" : " viewports") + " aligned to the master.");
 }
 
+void GeometryEngine::apply_arc_text(const ArcTextCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    const ArcData* a = h.kind == EntityKind::Arc ? store_.arc(h) : nullptr;
+    if (a == nullptr) {
+        report("Select an arc.");
+        return;
+    }
+    // The characters (UTF-8 sequences) and how wide each is.
+    std::vector<std::string> chars;
+    for (std::size_t i = 0; i < c.content.size();) {
+        const auto b = static_cast<unsigned char>(c.content[i]);
+        const std::size_t n = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 1;
+        chars.push_back(c.content.substr(i, n));
+        i += n;
+    }
+    std::vector<double> widths;
+    double total = 0.0;
+    for (const std::string& ch : chars) {
+        widths.push_back(text::text_width(ch, c.height));
+        total += widths.back();
+    }
+    if (chars.empty() || total <= 0.0) {
+        report("Enter some text to place along the arc.");
+        return;
+    }
+    const double rb = c.inward ? a->radius - c.offset : a->radius + c.offset; // the baseline's radius
+    if (rb <= 0.0) {
+        report("The offset puts the text past the arc's centre.");
+        return;
+    }
+    double sweep = std::fmod(a->end_angle - a->start_angle, 2.0 * kPi);
+    if (sweep <= 0.0) {
+        sweep += 2.0 * kPi;
+    }
+    const double room = rb * sweep; // along the baseline
+    const double fit = room / static_cast<double>(chars.size());
+    const double start = c.align == 1 ? 0.0 : c.align == 2 ? room - total : (room - total) * 0.5;
+    std::vector<EntityHandle> made;
+    double at = start;
+    for (std::size_t i = 0; i < chars.size(); ++i) {
+        // Where the character's middle is along the baseline from where the reading starts:
+        // outside, from the arc's end going clockwise; inside, from its start going round.
+        const double s = c.align == 0 ? (static_cast<double>(i) + 0.5) * fit : at + widths[i] * 0.5;
+        at += widths[i];
+        if (chars[i] == " ") {
+            continue;
+        }
+        const double ang = c.inward ? a->start_angle + s / rb : a->end_angle - s / rb;
+        AddTextCommand t;
+        t.pos = a->center + Vec2{std::cos(ang), std::sin(ang)} * rb;
+        t.height = c.height;
+        t.rotation = c.inward ? ang + kPi * 0.5 : ang - kPi * 0.5;
+        t.justify = 1; // centred on its baseline point
+        t.content = chars[i];
+        t.group = c.group;
+        const Command add = t;
+        const EntityHandle th = create_indexed(add);
+        push_create_item(c.group, th, add);
+        made.push_back(th);
+    }
+    if (made.empty()) {
+        return;
+    }
+    EntityGroup g;
+    g.name = store_.next_group_name();
+    g.description = "ARCTEXT " + c.content;
+    g.members = made;
+    store_.add_group(std::move(g));
+    selection_ = made;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Text placed along the arc: " + std::to_string(made.size()) + " characters, grouped.");
+}
+
 void GeometryEngine::apply_align_space(const AlignSpaceCommand& c) {
     // The viewport whose frame holds the first point, on the layout shown.
     EntityHandle vh = EntityHandle::null();
@@ -21493,6 +21568,9 @@ void GeometryEngine::apply_one(const Command& command) {
             }
             if constexpr (std::is_same_v<T, AlignSpaceCommand>) {
                 apply_align_space(c);
+            }
+            if constexpr (std::is_same_v<T, ArcTextCommand>) {
+                apply_arc_text(c);
             }
             if constexpr (std::is_same_v<T, HatchRemoveBoundaryCommand>) {
                 // The nearest object under the pick other than a hatch, and the island loops of

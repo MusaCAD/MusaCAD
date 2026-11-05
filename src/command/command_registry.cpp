@@ -857,6 +857,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/leader.svg", "Add Leader: another leader for a multileader, to its landing.");
     reg({"AIMLEADEREDITREMOVE"}, [] { return std::make_unique<MLeaderEditUiCommand>(true, "AIMLEADEREDITREMOVE"); },
         "assets/ribbon/leader.svg", "Remove Leader: take a leader away from a multileader.");
+    reg({"ARCTEXT"}, [] { return std::make_unique<ArcTextUiCommand>(); }, "assets/ribbon/text.svg",
+        "Place text along an arc, each character turned to it.");
     reg({"ALIGNSPACE"}, [] { return std::make_unique<AlignSpaceUiCommand>(); }, "",
         "Pan and scale a layout viewport so points of the model fall on points of the sheet.");
     reg({"LAYOUTMERGE", "-LAYOUTMERGE"}, [] { return std::make_unique<LayoutMergeCommand>(); }, "",

@@ -3833,6 +3833,26 @@ private:
     bool done_ = false;
 };
 
+/// ARCTEXT (Express Tools, #77): `Select an arc:`, `Enter text:`, `Specify text height <..>:`,
+/// `Specify position [Outward/Inward] <Outward>:`, `Specify alignment [Fit/Left/Right/Center]
+/// <Fit>:` and `Specify offset from arc <0>:` -- the text along the arc, a character a text.
+class ArcTextUiCommand final : public ICommand {
+public:
+    std::string name() const override { return "ARCTEXT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool free_text() const override { return step_ == Step::Text; }
+
+private:
+    enum class Step : std::uint8_t { Arc, Text, Height, Position, Align, Offset };
+    Step step_ = Step::Arc;
+    core::ArcTextCommand cmd_{};
+    bool done_ = false;
+    static inline double s_height_ = 2.5;
+};
+
 /// LAYOUTMERGE (Express Tools, #77): `Enter layout name(s) to merge, separated by commas,
 /// or [*] <*>:` and `Enter destination layout name or [Current] <Current>:` -- each layout's
 /// objects onto the destination's sheet where they were, and the layout deleted.

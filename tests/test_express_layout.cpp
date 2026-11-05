@@ -5,6 +5,7 @@
 // model fall on points of the sheet; LAYOUTMERGE, layouts made one.
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -181,4 +182,33 @@ TEST_CASE("#77 SYSVDLG is a command: it opens the System Variables window") {
     REQUIRE(reg.contains("SYSVDLG"));
     REQUIRE(reg.contains("ALIGNSPACE"));
     REQUIRE(reg.contains("LAYOUTMERGE"));
+}
+
+TEST_CASE("#77 ARCTEXT: the text along the arc, a character a text turned to it, grouped") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddArcCommand{{0, 0}, 10.0, 0.0, kPi, 1}); // the upper half circle
+    ArcTextCommand c;
+    c.pick = {0, 10};
+    c.pick_radius = 0.5;
+    c.content = "AB";
+    c.height = 2.0;
+    c.align = 3; // centred
+    c.group = 2;
+    engine.submit(c);
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.status.find("along the arc") != std::string::npos; }));
+    io::Document doc = dump(engine, "musacad_arctext.musa");
+    REQUIRE(doc.texts.size() == 2);
+    const io::DocText& a = doc.texts[0].content == "A" ? doc.texts[0] : doc.texts[1];
+    const io::DocText& b = doc.texts[0].content == "A" ? doc.texts[1] : doc.texts[0];
+    // Outside the arc, reading clockwise over the top: A left of the top, B right of it, both
+    // on the arc and turned to it.
+    REQUIRE(std::hypot(a.pos.x, a.pos.y) == Approx(10.0));
+    REQUIRE(a.pos.x < 0.0);
+    REQUIRE(b.pos.x > 0.0);
+    REQUIRE(a.pos.x == Approx(-b.pos.x));
+    REQUIRE(a.rotation == Approx(std::atan2(a.pos.y, a.pos.x) - kPi / 2.0));
+    REQUIRE(doc.groups.size() == 1);
+    REQUIRE(doc.groups[0].members.size() == 2);
+    engine.stop();
 }

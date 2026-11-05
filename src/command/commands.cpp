@@ -20530,6 +20530,96 @@ void AlignSpaceUiCommand::cancel(CommandContext& ctx) {
     done_ = true;
 }
 
+void ArcTextUiCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select an arc: ");
+}
+
+void ArcTextUiCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (step_) {
+    case Step::Arc:
+        if (ctx.input_is_pick() && ctx.hovered_kind() && *ctx.hovered_kind() != core::EntityKind::Arc) {
+            ctx.echo("The object selected is not an arc.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            cmd_.pick = *p;
+            cmd_.pick_radius = ctx.pick_radius();
+            step_ = Step::Text;
+            ctx.set_prompt("Enter text: ");
+        }
+        return;
+    case Step::Text:
+        if (text.empty()) {
+            done_ = true;
+            return;
+        }
+        cmd_.content = text;
+        step_ = Step::Height;
+        ctx.set_prompt("Specify text height <" + fmt4(s_height_) + ">: ");
+        return;
+    case Step::Height: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v <= 0.0) {
+                ctx.echo("Requires a positive number.");
+                return;
+            }
+            s_height_ = *v;
+        }
+        cmd_.height = s_height_;
+        step_ = Step::Position;
+        ctx.set_prompt("Specify position [Outward/Inward] <Outward>: ");
+        return;
+    }
+    case Step::Position:
+        if (u == "I" || u == "INWARD") {
+            cmd_.inward = true;
+        } else if (!t.empty() && u != "O" && u != "OUTWARD") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Align;
+        ctx.set_prompt("Specify alignment [Fit/Left/Right/Center] <Fit>: ");
+        return;
+    case Step::Align:
+        if (u == "L" || u == "LEFT") {
+            cmd_.align = 1;
+        } else if (u == "R" || u == "RIGHT") {
+            cmd_.align = 2;
+        } else if (u == "C" || u == "CENTER") {
+            cmd_.align = 3;
+        } else if (!t.empty() && u != "F" && u != "FIT") {
+            ctx.echo("Invalid option keyword.");
+            return;
+        }
+        step_ = Step::Offset;
+        ctx.set_prompt("Specify offset from arc <0>: ");
+        return;
+    case Step::Offset: {
+        if (!t.empty()) {
+            const std::optional<double> v = parse_number(t);
+            if (!v || *v < 0.0) {
+                ctx.echo("Requires a number, 0 or more.");
+                return;
+            }
+            cmd_.offset = *v;
+        }
+        cmd_.group = ctx.group_id();
+        ctx.submit(cmd_);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void ArcTextUiCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void LayoutMergeCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter layout name(s) to merge, separated by commas, or [*] <*>: ");
 }

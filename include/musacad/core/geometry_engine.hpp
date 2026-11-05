@@ -672,6 +672,7 @@ private:
     void apply_add_block_mleader(const AddBlockMLeaderCommand& c);
     void apply_collect_mleaders(const CollectMLeadersCommand& c);
     void apply_align_space(const AlignSpaceCommand& c);
+    void apply_arc_text(const ArcTextCommand& c);
     void apply_viewport_view(const SetViewportViewCommand& c);
     void apply_vplayer(const SetViewportLayerFreezeCommand& c);
     void apply_insert_attribs(const SetInsertAttribsCommand& c);
