@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/command/command_processor.hpp"
+#include "musacad/command/command_registry.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/io/document.hpp"
@@ -173,4 +174,11 @@ TEST_CASE("#77 LAYOUTMERGE asks for the layouts and the destination") {
     h.run({""}); // the harness has no layouts: nothing to merge
     REQUIRE(h.out.lines.back() == "No layouts to merge.");
     REQUIRE_FALSE(h.proc.has_active_command());
+}
+
+TEST_CASE("#77 SYSVDLG is a command: it opens the System Variables window") {
+    const musacad::command::CommandRegistry reg = musacad::command::CommandRegistry::make_default();
+    REQUIRE(reg.contains("SYSVDLG"));
+    REQUIRE(reg.contains("ALIGNSPACE"));
+    REQUIRE(reg.contains("LAYOUTMERGE"));
 }

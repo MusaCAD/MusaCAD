@@ -278,6 +278,8 @@ CommandRegistry CommandRegistry::make_default() {
     file_cmd({"REINIT"}, "REINIT", "", "Read your command aliases (the PGP file) again.");
     file_cmd({"MLEADERSTYLE", "MLS"}, "MLEADERSTYLE", "assets/ribbon/leader.svg",
              "Open the Multileader Style Manager: the styles new multileaders take.");
+    file_cmd({"SYSVDLG"}, "SYSVDLG", "assets/ribbon/settings.svg",
+             "Open the System Variables window: every system variable with its value, to see and change.");
     file_cmd({"MLSTYLE"}, "MLSTYLE", "",
              "Open the Multiline Style window: the styles multilines are drawn in -- their lines, ends, joints and fill.");
     file_cmd({"CUI"}, "CUI", "assets/ribbon/settings.svg",

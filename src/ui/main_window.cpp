@@ -348,6 +348,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             QTimer::singleShot(0, this, &MainWindow::open_mline_style_dialog);
             return true;
         }
+        if (action == "SYSVDLG") {
+            QTimer::singleShot(0, this, &MainWindow::open_sysvar_dialog);
+            return true;
+        }
         if (action == "CUI") {
             QTimer::singleShot(0, this, &MainWindow::open_cui_dialog);
             return true;
@@ -4293,6 +4297,95 @@ void MainWindow::open_block_editor_dialog() {
 
 // MLEADERSTYLE: the Multileader Style Manager -- the styles, Set Current, New (from the one
 // picked), Modify and Delete; a style's arrowhead, landing, text and leader points.
+void MainWindow::open_sysvar_dialog() {
+    // AutoCAD Express Tools' System Variables window: every variable SETVAR knows, with its
+    // value now -- read off the variable's own prompt, as the command shows it -- and a value
+    // typed into the table set through that command, so it is checked as typing it would be.
+    struct Capture final : command::CommandOutput {
+        std::vector<std::string> lines;
+        void append_line(const std::string& l) override { lines.push_back(l); }
+        void set_prompt(const std::string& /*p*/) override {}
+    };
+    auto capture = std::make_shared<Capture>();
+    auto proc = std::make_shared<command::CommandProcessor>([this](core::Command c) { engine_->submit(std::move(c)); },
+                                                            viewport_, *capture);
+    const auto value_of = [proc](const std::string& name) {
+        proc->start_command(name);
+        std::string p = proc->has_active_command() ? proc->current_prompt() : std::string();
+        if (proc->has_active_command()) {
+            proc->cancel();
+        }
+        const std::size_t lt = p.rfind('<');
+        const std::size_t gt = p.rfind('>');
+        return lt != std::string::npos && gt != std::string::npos && gt > lt
+                   ? QString::fromStdString(p.substr(lt + 1, gt - lt - 1))
+                   : QString();
+    };
+
+    QDialog dlg(this);
+    dlg.setObjectName(QStringLiteral("SysVarDialog"));
+    dlg.setWindowTitle(QStringLiteral("System Variables"));
+    dlg.resize(460, 560);
+    auto* box = new QVBoxLayout(&dlg);
+    auto* filter = new QLineEdit(&dlg);
+    filter->setPlaceholderText(QStringLiteral("Show the variables whose name has..."));
+    box->addWidget(filter);
+    auto* table = new QTableWidget(&dlg);
+    table->setColumnCount(2);
+    table->setHorizontalHeaderLabels({QStringLiteral("Variable"), QStringLiteral("Value")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->verticalHeader()->setVisible(false);
+    box->addWidget(table, 1);
+    auto* status = new QLabel(QStringLiteral("Double-click a value to change it."), &dlg);
+    status->setWordWrap(true);
+    box->addWidget(status);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    box->addWidget(buttons);
+
+    std::vector<std::string> names(command::system_variable_names().begin(), command::system_variable_names().end());
+    std::sort(names.begin(), names.end());
+    auto filling = std::make_shared<bool>(true);
+    table->setRowCount(static_cast<int>(names.size()));
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        auto* n = new QTableWidgetItem(QString::fromStdString(names[i]));
+        n->setFlags(n->flags() & ~Qt::ItemIsEditable);
+        table->setItem(static_cast<int>(i), 0, n);
+        table->setItem(static_cast<int>(i), 1, new QTableWidgetItem(value_of(names[i])));
+    }
+    *filling = false;
+    connect(filter, &QLineEdit::textChanged, table, [table](const QString& text) {
+        for (int r = 0; r < table->rowCount(); ++r) {
+            table->setRowHidden(r, !table->item(r, 0)->text().contains(text, Qt::CaseInsensitive));
+        }
+    });
+    connect(table, &QTableWidget::itemChanged, table,
+            [table, proc, capture, value_of, filling, status](QTableWidgetItem* item) {
+                if (*filling || item->column() != 1) {
+                    return;
+                }
+                const std::string name = table->item(item->row(), 0)->text().toStdString();
+                capture->lines.clear();
+                proc->start_command(name);
+                proc->submit_line(item->text().toStdString());
+                const bool refused = proc->has_active_command(); // still asking: not a value it takes
+                if (refused) {
+                    proc->cancel();
+                }
+                status->setText(refused && !capture->lines.empty()
+                                    ? QString::fromStdString(capture->lines.front())
+                                    : QStringLiteral("%1 set.").arg(QString::fromStdString(name)));
+                // The value as it is now (after the drawing has taken it).
+                const int row = item->row();
+                QTimer::singleShot(200, table, [table, row, name, value_of, filling] {
+                    *filling = true;
+                    table->item(row, 1)->setText(value_of(name));
+                    *filling = false;
+                });
+            });
+    dlg.exec();
+}
+
 void MainWindow::open_mleader_style_dialog() {
     const NamedListDialog d = make_named_list_dialog(this, QStringLiteral("Multileader Style Manager"));
     d.dlg->setObjectName(QStringLiteral("MLeaderStyleDialog"));

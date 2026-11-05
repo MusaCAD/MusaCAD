@@ -32,6 +32,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   their blocks in a row, a column or rows of a number you give, the first's leader to them.
 - **ALIGNSPACE** (#77): two points of the model, picked through a layout viewport, and two
   points of the sheet -- the viewport panned and scaled so they fall on them.
+- **SYSVDLG** (#77): the System Variables window -- every system variable with its value,
+  filtered by name; a value typed in is set as the variable's own command sets it.
 - **LAYOUTMERGE** (#77): layouts made one -- each layout's objects onto the destination's
   sheet, where they were, and the layout deleted.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
