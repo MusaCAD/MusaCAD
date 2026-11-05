@@ -101,6 +101,8 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QToolTip>
+#include <QBuffer>
+#include <QByteArray>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -488,6 +490,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     qApp->installEventFilter(this);
 
     build_ribbon();
+    install_extended_tooltips();
     build_status_bar();
     build_tool_palettes();
     ribbon_->set_persist(!developer_hook_active()); // the tabs and panels shown (ribbon right-click)
@@ -2151,6 +2154,87 @@ void make_gallery(QComboBox* box) {
     box->setProperty("musacadGallery", true);
 }
 } // namespace
+
+/// The ribbon's extended tooltips (#78), AutoCAD's second stage: resting on a tool two
+/// seconds longer shows more than its tooltip -- the command it starts, the names it can be
+/// typed as, and what it does.
+class ExtendedTooltips final : public QObject {
+public:
+    ExtendedTooltips(QObject* parent, const command::CommandRegistry& registry) : QObject(parent), registry_(registry) {
+        timer_.setSingleShot(true);
+        timer_.setInterval(2000);
+        connect(&timer_, &QTimer::timeout, this, [this] { show(); });
+    }
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        switch (event->type()) {
+        case QEvent::Enter:
+            target_ = qobject_cast<QWidget*>(watched);
+            timer_.start();
+            break;
+        case QEvent::Leave:
+        case QEvent::MouseButtonPress:
+        case QEvent::Hide:
+            timer_.stop();
+            target_ = nullptr;
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+private:
+    void show() {
+        if (target_ == nullptr || !target_->isVisible() || !target_->underMouse()) {
+            return;
+        }
+        const auto* button = qobject_cast<QToolButton*>(target_.data());
+        QString title = button != nullptr ? button->text() : QString();
+        title.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        QString html = QStringLiteral("<p><b>%1</b></p>").arg(title.toHtmlEscaped());
+        if (!target_->toolTip().isEmpty()) {
+            html += QStringLiteral("<p>%1</p>").arg(target_->toolTip().toHtmlEscaped());
+        }
+        const QString alias = target_->property("musacadCommand").toString();
+        if (const command::CommandInfo* info = alias.isEmpty() ? nullptr : registry_.find(alias.toStdString())) {
+            QStringList names;
+            for (const std::string& a : registry_.aliases_of(info->name)) {
+                names << QString::fromStdString(a);
+            }
+            html += QStringLiteral("<p>Command: <b>%1</b>").arg(QString::fromStdString(info->name).toHtmlEscaped());
+            if (names.size() > 1) {
+                html += QStringLiteral("<br>Typed as: %1").arg(names.join(QStringLiteral(", ")).toHtmlEscaped());
+            }
+            html += QStringLiteral("</p>");
+            if (!info->description.empty() && QString::fromStdString(info->description) != target_->toolTip()) {
+                html += QStringLiteral("<p>%1</p>").arg(QString::fromStdString(info->description).toHtmlEscaped());
+            }
+            if (button != nullptr && !button->icon().isNull()) {
+                // The tool's icon, large, as the extended tooltip's picture.
+                const QPixmap big = button->icon().pixmap(64, 64);
+                QByteArray png;
+                QBuffer buf(&png);
+                buf.open(QIODevice::WriteOnly);
+                big.save(&buf, "PNG");
+                html = QStringLiteral("<table><tr><td valign=top><img src=\"data:image/png;base64,%1\"></td><td>%2</td></tr></table>")
+                           .arg(QString::fromLatin1(png.toBase64()), html);
+            }
+        }
+        QToolTip::showText(QCursor::pos(), html, target_);
+    }
+    const command::CommandRegistry& registry_;
+    QTimer timer_;
+    QPointer<QWidget> target_;
+};
+
+void MainWindow::install_extended_tooltips() {
+    auto* tips = new ExtendedTooltips(this, processor_->registry());
+    for (QToolButton* b : ribbon_->findChildren<QToolButton*>()) {
+        if (!b->property("musacadCommand").toString().isEmpty() || !b->toolTip().isEmpty()) {
+            b->installEventFilter(tips);
+        }
+    }
+}
 
 void MainWindow::sync_style_combos() {
     if (viewport_ == nullptr) {

@@ -49,6 +49,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - **Style galleries** (#78) -- the Dimension Style, Multileader Style and Table Style lists on
   Annotate show each style as a picture: a dimension with its arrows and text, a leader with
   its landing and content, a table's title, header and cells.
+- **Extended tooltips** (#78) -- resting on a ribbon tool for a moment shows its command, the
+  names it is typed as and what it does, as AutoCAD's do.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).

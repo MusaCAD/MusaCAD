@@ -314,6 +314,7 @@ private:
     void open_table_style_dialog(); ///< TABLESTYLE
     void open_mleader_style_dialog(); ///< MLEADERSTYLE
     void open_sysvar_dialog();        ///< SYSVDLG (Express Tools, #77)
+    void install_extended_tooltips(); ///< the ribbon tools' second-stage tooltips (#78)
     void open_mline_style_dialog();   ///< MLSTYLE
     void open_block_editor_dialog();  ///< BEDIT: Edit Block Definition
     // The user's own command aliases, a PGP file in the settings folder (ALIASEDIT, REINIT).
