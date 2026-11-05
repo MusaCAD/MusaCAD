@@ -114,10 +114,8 @@ TEST_CASE("#61 MLEADER's Content type Block asks for the block, then its attribu
     REQUIRE(c->values == std::vector<std::string>{"12"});
     REQUIRE(c->vertices.front() == Vec2{0, 0});
     REQUIRE_FALSE(h.proc.has_active_command());
-    // The content type stays Block for the next one, as AutoCAD keeps it.
-    h.run({"MLEADER", "0,0", "10,5", ""});
-    REQUIRE(h.last<AddBlockMLeaderCommand>()->values == std::vector<std::string>{"TAGNUMBER"});
-    h.run({"MLEADER", "O", "C", "M", "X", "0,0", "10,5", "NOTE"});
+    // The Options are for that multileader: the next takes its content from the style again.
+    h.run({"MLEADER", "0,0", "10,5", "NOTE"});
     REQUIRE(h.last<AddMLeaderCommand>()->content == "NOTE");
 }
 
@@ -217,4 +215,26 @@ TEST_CASE("#61 DXF: a balloon goes out as its leader and a reference; AutoCAD's 
     REQUIRE(ac.mleaders[0].content == "42");
     REQUIRE(ac.mleaders[0].block.pos == Vec2{30, 12});
     REQUIRE(ac.mleaders[0].block.height == Approx(3.0));
+}
+
+TEST_CASE("#61 a multileader style of type Block: MLEADER takes its block, the file keeps it") {
+    io::Document doc;
+    MLeaderStyle balloons;
+    balloons.name = "Balloons";
+    balloons.text = false;
+    balloons.block = "_TagBox";
+    doc.mleader_styles = {MLeaderStyle{}, balloons};
+    doc.current_mleader_style = 1;
+    io::Document back;
+    REQUIRE(io::parse_native(io::serialize_native(doc), back).ok);
+    REQUIRE(back.mleader_styles.size() == 2);
+    REQUIRE(back.mleader_styles[1].block == "_TagBox");
+    REQUIRE(back.mleader_styles[0].block.empty());
+
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::Add, "Balloons", balloons});
+    engine.submit(MLeaderStyleCommand{MLeaderStyleCommand::Op::SetCurrent, "Balloons", {}});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.current_mleader_style == 1; }));
+    engine.stop();
 }

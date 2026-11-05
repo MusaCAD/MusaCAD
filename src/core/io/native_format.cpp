@@ -1675,6 +1675,11 @@ std::string serialize_native(const Document& doc) {
             s += ' ';
             s += ms.name; // absorbs the rest of the line
             s += '\n';
+            if (!ms.block.empty()) {
+                s += "MLEADERSTYLEBLOCK "; // v47: Multileader type Block, its source block
+                s += ms.block;              // absorbs the rest of the line
+                s += '\n';
+            }
         }
         s += "CURMLEADERSTYLE ";
         append_uint(s, doc.current_mleader_style);
@@ -2242,6 +2247,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                 ms.name += std::string(tok[i]);
             }
             doc.mleader_styles.push_back(std::move(ms));
+        } else if (key == "MLEADERSTYLEBLOCK") {
+            if (doc.mleader_styles.empty() || tok.size() < 2) {
+                return fail("malformed MLEADERSTYLEBLOCK");
+            }
+            std::string name(tok[1]);
+            for (std::size_t i = 2; i < tok.size(); ++i) {
+                name += ' ';
+                name += std::string(tok[i]);
+            }
+            doc.mleader_styles.back().block = std::move(name);
         } else if (key == "CURMLEADERSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {

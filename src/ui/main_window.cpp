@@ -110,6 +110,7 @@
 #include "musacad/command/sysvars.hpp"
 #include "musacad/command/dyn_fields.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/mleader_blocks.hpp"
 #include "musacad/core/io/xlsx.hpp"
 #include "musacad/core/linetype.hpp"
 #include "musacad/core/units.hpp"
@@ -4320,7 +4321,7 @@ void MainWindow::open_mleader_style_dialog() {
     };
     // AutoCAD's three tabs in one form: Leader Format (the arrowhead), Leader Structure
     // (the points and the landing) and Content (the text and its gap).
-    const auto edit = [](QWidget* parent, const QString& title, core::MLeaderStyle& st) {
+    const auto edit = [this](QWidget* parent, const QString& title, core::MLeaderStyle& st) {
         QDialog dlg(parent);
         dlg.setWindowTitle(title);
         auto* form = new QFormLayout(&dlg);
@@ -4347,8 +4348,23 @@ void MainWindow::open_mleader_style_dialog() {
         landing->setChecked(st.landing);
         QDoubleSpinBox* landing_distance = spin(st.landing_distance, 0.0, 1e6);
         auto* content = new QComboBox(&dlg);
-        content->addItems({QStringLiteral("Mtext"), QStringLiteral("None")});
-        content->setCurrentIndex(st.text ? 0 : 1);
+        content->addItems({QStringLiteral("Mtext"), QStringLiteral("Block"), QStringLiteral("None")});
+        content->setCurrentIndex(!st.block.empty() ? 1 : st.text ? 0 : 2);
+        // Block: the source block -- AutoCAD's tag blocks, then the drawing's own.
+        auto* source = new QComboBox(&dlg);
+        source->setObjectName(QStringLiteral("mleaderstyle.block"));
+        source->setEditable(true);
+        for (const std::string_view n : core::kStandardTagBlocks) {
+            source->addItem(QString::fromUtf8(n.data(), static_cast<qsizetype>(n.size())));
+        }
+        for (const std::string& n : viewport_->block_names()) {
+            if (!n.empty() && n.front() != '*' && core::standard_tag_block_name(n).empty()) {
+                source->addItem(QString::fromStdString(n));
+            }
+        }
+        source->setCurrentText(QString::fromStdString(st.block.empty() ? std::string("_TagCircle") : st.block));
+        source->setEnabled(content->currentIndex() == 1);
+        connect(content, &QComboBox::currentIndexChanged, source, [source](int i) { source->setEnabled(i == 1); });
         QDoubleSpinBox* text_height = spin(st.text_height, 0.0001, 1e6);
         QDoubleSpinBox* gap = spin(st.landing_gap, 0.0, 1e6);
         form->addRow(QStringLiteral("Leader type:"), leader_type);
@@ -4358,6 +4374,7 @@ void MainWindow::open_mleader_style_dialog() {
         form->addRow(landing);
         form->addRow(QStringLiteral("Landing distance:"), landing_distance);
         form->addRow(QStringLiteral("Multileader type:"), content);
+        form->addRow(QStringLiteral("Source block:"), source);
         form->addRow(QStringLiteral("Text height:"), text_height);
         form->addRow(QStringLiteral("Landing gap:"), gap);
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -4374,6 +4391,7 @@ void MainWindow::open_mleader_style_dialog() {
         st.landing = landing->isChecked();
         st.landing_distance = landing_distance->value();
         st.text = content->currentIndex() == 0;
+        st.block = content->currentIndex() == 1 ? source->currentText().trimmed().toStdString() : std::string();
         st.text_height = text_height->value();
         st.landing_gap = gap->value();
         return true;

@@ -16713,7 +16713,11 @@ void MLeaderCommand::start(CommandContext& ctx) {
     style_ = cur < styles.size() ? styles[cur] : core::MLeaderStyle{};
     style_index_ = cur < styles.size() ? cur : std::uint16_t{0};
     s_max_points_ = style_.max_points;
-    s_content_ = style_.text && !s_block_content_; // a block chosen last time stays the content
+    s_block_content_ = !style_.block.empty(); // Multileader type Block: the style's block
+    if (s_block_content_) {
+        s_block_ = style_.block;
+    }
+    s_content_ = style_.text && !s_block_content_;
     s_landing_ = style_.landing;
     s_leader_type_ = style_.leader_type;
     first_prompt(ctx);

@@ -20,6 +20,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   dimensions stay associative in AutoCAD and when the file is opened again. Opening an AutoCAD
   drawing, the dimensions it has associated follow their objects and the others do not, as
   there.
+- **Multileaders with blocks** (#61). MLEADER's Content type Block -- `Enter block name or [?]
+  <_TagCircle>:` -- puts a block at the end of the landing instead of text, and asks its
+  attribute values (`Enter tag number <TAGNUMBER>:`). AutoCAD's standard ones (_TagCircle,
+  _TagBox, _TagHexagon, _TagSlot, _TagTriangle, _DetailCallout) are added to the drawing the
+  first time they are used; any block of the drawing works too. A multileader style can be of
+  type Block, its source block what MLEADER uses (the Multileader Style Manager). Balloons are
+  kept in the drawing (format v47); in DXF each goes out as its leader and a block reference
+  with its values, and AutoCAD's come in. EXPLODE makes block references of them.
 - **The nine gradient fills** (#41): besides the linear one, Cylinder, Inverted cylinder,
   Spherical, Inverted spherical, Hemispherical, Inverted hemispherical, Curved and Inverted
   curved, by the names AutoCAD's gallery gives them (GR_LINEAR, GR_CYLIN, GR_SPHER ...).
