@@ -20,6 +20,10 @@ jobs:
   macos-app:
     runs-on: macos-latest # Apple Silicon; macos-14 was retired in November 2026.
     timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -47,7 +51,7 @@ jobs:
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.1"
+          version: "6.9.3"
           host: mac
           target: desktop
           arch: clang_64
@@ -55,13 +59,29 @@ jobs:
           cache: true
 
       - name: Install build tools
-        run: brew install ninja librsvg
+        run: brew install ninja librsvg ccache
+
+      - name: Restore compiler cache
+        id: compiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: macos-ccache-${{ runner.arch }}-qt693-${{ github.sha }}
+          restore-keys: macos-ccache-${{ runner.arch }}-qt693-
 
       - name: Configure release preset (Apple Silicon, macOS 12+)
-        run: cmake --preset release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+        run: cmake --preset release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build application and GPU verification
+        id: build
         run: cmake --build --preset release --target musacad_app musacad_gl_compat --parallel 2
+
+      - name: Save compiler cache
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Verify OpenGL 4.1 rendering on the runner
         run: build/release/bin/musacad_gl_compat | tee gpu-check.log
@@ -115,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           APP="$PWD/MusaCAD.app"
-          lipo -verify_arch arm64 "$APP/Contents/MacOS/musacad_app"
+          lipo "$APP/Contents/MacOS/musacad_app" -verify_arch arm64
           codesign --verify --deep --strict --verbose=2 "$APP"
           FIXTURE="$PWD/tests/fixtures/cli_demo.musa"
           cd "$RUNNER_TEMP"
@@ -125,12 +145,27 @@ jobs:
           test -s smoke.pdf
 
       - name: Capture DYN in the native Cocoa viewport
+        id: gui
         run: |
           set -euo pipefail
+          unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
           MUSACAD_DYN_SHOT="0|$PWD/macos-dyn.png" MusaCAD.app/Contents/MacOS/musacad_app > gui-check.log 2>&1
           test -s macos-dyn.png
           grep -q 'GL renderer:' gui-check.log
+          grep -q 'real-key-into-canvas=1 tab=1' gui-check.log
           if grep -E 'shader compile failed|program link failed|viewport disabled' gui-check.log; then exit 1; fi
+
+      - name: Collect native GUI crash diagnostics
+        if: failure() && steps.gui.outcome == 'failure'
+        timeout-minutes: 2
+        run: |
+          unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
+          MUSACAD_DYN_SHOT="0|$PWD/macos-dyn-debug.png" QT_LOGGING_RULES='qt.qpa.openglcontext.debug=true' \
+            lldb --batch -o run -o 'thread backtrace all' -- MusaCAD.app/Contents/MacOS/musacad_app > lldb-check.log 2>&1 || true
+          mkdir -p macos-diagnostics
+          for report in "$HOME"/Library/Logs/DiagnosticReports/musacad_app*; do
+            if [ -f "$report" ]; then cp "$report" macos-diagnostics/; fi
+          done
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.notarize == 'true'
@@ -213,6 +248,8 @@ jobs:
           path: |
             gpu-check.log
             gui-check.log
+            lldb-check.log
+            macos-diagnostics/
             macos-dyn.png
             *-notary.json
           if-no-files-found: ignore

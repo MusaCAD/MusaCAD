@@ -4,10 +4,11 @@
 # macOS build (issue #2)
 
 `.github/workflows/build-macos.yml` uses `macos-latest` (Apple Silicon), the release
-preset, Qt 6.8.1 and a macOS 12 deployment target. The retired `macos-14` runner is
+preset, Qt 6.9.3 and a macOS 12 deployment target. The retired `macos-14` runner is
 no longer used. Manual runs derive the version from CMake and upload test artifacts;
 release tags also publish the DMG and SHA-256 checksum. An explicitly supplied
-version must match the source version.
+version must match the source version. Qt 6.9.3 removes the obsolete AGL link dependency,
+which is absent from the macOS 26 SDK, while retaining macOS 12 as the minimum target.
 
 ## Viewport
 
@@ -64,7 +65,7 @@ CI cannot create them. Until a credentialed run succeeds, notarization remains u
 cmake --preset release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
 cmake --build --preset release --target musacad_app musacad_gl_compat --parallel 2
 build/release/bin/musacad_gl_compat
-QT_ROOT_DIR=~/Qt/6.8.1/macos packaging/macos/build_app.sh 0.9.0 build/release/bin/musacad_app
+QT_ROOT_DIR=~/Qt/6.9.3/macos packaging/macos/build_app.sh 0.9.0 build/release/bin/musacad_app
 ```
 
 Needs Qt 6 (`macdeployqt`), Ninja and `rsvg-convert` (`brew install ninja librsvg`).
@@ -79,5 +80,5 @@ MESA_GL_VERSION_OVERRIDE=4.1 MESA_GLSL_VERSION_OVERRIDE=410 build/release/bin/mu
 ```
 
 References: [GitHub runner labels](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job),
-[Qt deployment](https://doc.qt.io/qt-6.8/macos-deployment.html),
+[Qt deployment](https://doc.qt.io/archives/qt-6.9/macos-deployment.html),
 [Apple signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac).
