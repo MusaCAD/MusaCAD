@@ -42,6 +42,8 @@
 #include <QCursor>
 #include <QExposeEvent>
 #include <QGuiApplication>
+#include <QFontInfo>
+#include <QFontMetricsF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -87,21 +89,12 @@ std::optional<double> dyn_parse(const std::string& s) {
     }
 }
 
-// Format a live value for an on-canvas field: up to 4 decimals, no trailing zeros
-// or exponent (the stroke font only has digits / '.' / '-').
+// Compact decimal values in the same locale-independent grammar the input parser uses.
 std::string dyn_format(double v) {
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), "%.4f", v);
-    std::string s(buf);
-    if (s.find('.') != std::string::npos) {
-        while (s.back() == '0') {
-            s.pop_back();
-        }
-        if (s.back() == '.') {
-            s.pop_back();
-        }
-    }
-    return s;
+    QString value = QString::number(v, 'f', 4);
+    while (value.endsWith(QLatin1Char('0'))) value.chop(1);
+    if (value.endsWith(QLatin1Char('.'))) value.chop(1);
+    return value == QLatin1String("-0") ? "0" : value.toStdString();
 }
 
 // Screen-space box helpers for the on-canvas command surfaces (filled quad / outline).
@@ -1107,6 +1100,7 @@ void ViewportWindow::append_tracking(render::RenderOverlay& ov, core::Vec2 curso
         label.out = {k, -k}; // below and to the right of the cursor
         label.text = tip;
         label.prose = true;
+        prepare_dyn_label(label);
         ov.dyn_labels.push_back(std::move(label));
     }
 }
@@ -3640,6 +3634,10 @@ void ViewportWindow::rebuild_overlay() {
                                                 : std::string{};
                 label.text = buf.empty() ? dyn_format(f.value) : buf;
                 label.focused = (f.slot == dyn_active_slot_);
+                label.editing = !buf.empty();
+                label.locked = dyn_parse(buf).has_value();
+                if (f.is_angle && buf.empty()) label.text += "°";
+                prepare_dyn_label(label, f.label);
                 ov.dyn_labels.push_back(std::move(label));
             }
         }
@@ -3652,8 +3650,11 @@ void ViewportWindow::rebuild_overlay() {
         build_command_ui(ov.command_ui);
     } else if (sub_prompt_active()) {
         build_sub_prompt_ui(ov.command_ui); // buffer is cleared on Enter (per step)
-    } else if (!sub_entry_.empty()) {
+    } else {
         sub_entry_.clear(); // command ended / entered a rubber-band: drop stale text
+        if (dyn_capturing() && dynprompt_.load() != 0) {
+            build_sub_prompt_ui(ov.command_ui);
+        }
     }
     // A dialog-driven ghost (Rotate/Scale dialogs) shows the selection transformed by
     // the typed value, through the same ghost path the commands' rubber bands use.
@@ -3960,7 +3961,7 @@ std::string ViewportWindow::cmd_font() {
     // The platform's own UI font first (Segoe UI on Windows, the desktop sans on Linux),
     // so the on-canvas entry looks like the rest of the interface; the first usable face
     // in the database only as the fallback.
-    const std::string ui_font = QGuiApplication::font().family().toStdString();
+    const std::string ui_font = QFontInfo(QGuiApplication::font()).family().toStdString();
     if (usable(ui_font)) {
         cmd_font_name_ = ui_font;
         return cmd_font_name_;
@@ -3975,45 +3976,107 @@ std::string ViewportWindow::cmd_font() {
 }
 
 void ViewportWindow::append_glyphs(const std::string& text, double ox, double baseline_y, double h,
-                                   std::vector<core::Vec2>& out) {
+                                   std::vector<render::CanvasGlyphVertex>& out) {
+    if (text.empty()) return;
     const std::string face = cmd_font();
-    if (font_engine_ == nullptr || face.empty() || text.empty()) {
-        return;
-    }
-    // One layout per (face, height, text); every later use is a translate of the
-    // cached run. Bounded: the cache is dropped wholesale when it grows large, which
-    // costs one relayout of whatever is on screen and nothing else.
     const std::string key = face + '\x1f' + std::to_string(h) + '\x1f' + text;
     auto it = glyph_run_cache_.find(key);
     if (it == glyph_run_cache_.end()) {
-        if (glyph_run_cache_.size() > 256) {
-            glyph_run_cache_.clear();
+        if (glyph_run_cache_.size() > 256) glyph_run_cache_.clear();
+        QFont font(QString::fromStdString(face));
+        font.setPixelSize(std::max(1, static_cast<int>(std::lround(h * 1.4))));
+        const QFontMetricsF metrics(font);
+        const double scale = h / std::max(1.0, metrics.capHeight());
+        const QString value = QString::fromStdString(text);
+        const double left = std::min(0.0, metrics.boundingRect(value).left() * scale);
+        const int baseline = static_cast<int>(std::ceil(metrics.ascent() * scale)) + 2;
+        QImage coverage(static_cast<int>(std::ceil(metrics.horizontalAdvance(value) * scale - left)) + 6,
+                        baseline + static_cast<int>(std::ceil(metrics.descent() * scale)) + 3,
+                        QImage::Format_ARGB32_Premultiplied);
+        coverage.fill(Qt::transparent);
+        QPainter painter(&coverage);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.scale(scale, scale);
+        painter.drawText(QPointF((2.0 - left) / scale, baseline / scale), value);
+        painter.end();
+        std::vector<render::CanvasGlyphVertex> tris;
+        // Merge adjacent pixels with the same coverage into a span. The resulting
+        // geometry is cached and drawn in one batch per text colour, including edge
+        // antialiasing even on a non-multisampled viewport (software GL included).
+        for (int y = 0; y < coverage.height(); ++y) {
+            const auto* row = reinterpret_cast<const QRgb*>(coverage.constScanLine(y));
+            for (int x = 0; x < coverage.width();) {
+                const int alpha = qAlpha(row[x]);
+                const int begin = x++;
+                while (x < coverage.width() && qAlpha(row[x]) == alpha) ++x;
+                if (alpha == 0) continue;
+                const double x0 = begin - 2.0 + left, x1 = x - 2.0 + left;
+                const double y0 = y - baseline, y1 = y0 + 1.0;
+                const float a = static_cast<float>(alpha) / 255.0f;
+                for (const core::Vec2 v : {core::Vec2{x0,y0}, {x1,y0}, {x1,y1}, {x0,y0}, {x1,y1}, {x0,y1}}) {
+                    tris.push_back({v, a});
+                }
+            }
         }
-        std::vector<core::Vec2> tris;
-        font_engine_->glyph_fills(face, text, {0.0, 0.0}, h, 0.0, tris);
         it = glyph_run_cache_.emplace(key, std::move(tris)).first;
     }
-    const std::vector<core::Vec2>& tris = it->second;
-    out.reserve(out.size() + tris.size());
-    for (const core::Vec2& v : tris) {
-        out.push_back({ox + v.x, baseline_y - v.y}); // font is y-up; screen is y-down
+    out.reserve(out.size() + it->second.size());
+    // Keep rasterized glyphs on physical pixels so movement cannot soften the text.
+    const double x = std::round(ox), y = std::round(baseline_y);
+    for (const auto& v : it->second) {
+        out.push_back({{x + v.position.x, y + v.position.y}, v.coverage});
     }
 }
 
 double ViewportWindow::cmd_advance(const std::string& text, double h) {
     const std::string face = cmd_font();
-    if (font_engine_ == nullptr || face.empty()) {
-        return static_cast<double>(text.size()) * h * 0.55;
-    }
     const std::string key = face + '\x1f' + std::to_string(h) + '\x1f' + text;
     auto it = advance_cache_.find(key);
     if (it == advance_cache_.end()) {
-        if (advance_cache_.size() > 512) {
-            advance_cache_.clear();
-        }
-        it = advance_cache_.emplace(key, font_engine_->advance(face, text, h)).first;
+        if (advance_cache_.size() > 512) advance_cache_.clear();
+        QFont font(QString::fromStdString(face));
+        font.setPixelSize(std::max(1, static_cast<int>(std::lround(h * 1.4))));
+        const QFontMetricsF metrics(font);
+        const double width = metrics.horizontalAdvance(QString::fromStdString(text)) * h /
+                             std::max(1.0, metrics.capHeight());
+        it = advance_cache_.emplace(key, width).first;
     }
     return it->second;
+}
+
+std::string ViewportWindow::fit_ui_text(const std::string& text, double h, double max_width, bool keep_end) {
+    if (cmd_advance(text, h) <= max_width) return text;
+    QString fitted = QString::fromStdString(text);
+    while (!fitted.isEmpty()) {
+        if (keep_end) fitted.remove(0, 1); else fitted.chop(1);
+        const std::string result = (keep_end ? QStringLiteral("…") + fitted : fitted + QStringLiteral("…")).toStdString();
+        if (cmd_advance(result, h) <= max_width) return result;
+    }
+    return {};
+}
+
+core::Vec2 ViewportWindow::dyn_viewport_size() const {
+    const double dpr = devicePixelRatio();
+    double x = 0.0, top = 0.0, w = 0.0, h = 0.0;
+    std::scoped_lock lock(camera_mutex_);
+    active_tile_rect(static_cast<int>(width() * dpr), static_cast<int>(height() * dpr), x, top, w, h);
+    return {w, h};
+}
+
+void ViewportWindow::prepare_dyn_label(render::DynLabel& label, const std::string& caption) {
+    const double dpr = devicePixelRatio();
+    const double h = 12.0 * dpr;
+    const double ch = 9.0 * dpr;
+    const std::string name = QString::fromStdString(caption).toUpper().toStdString();
+    label.caption_width = cmd_advance(name, ch);
+    const double available = std::max(24.0 * dpr, std::min(320.0 * dpr,
+        dyn_viewport_size().x - label.caption_width - 64.0 * dpr));
+    const std::string value = fit_ui_text(label.text, h, available, label.editing);
+    label.value_width = cmd_advance(value, h);
+    append_glyphs(value, 0, 0, h, label.value_glyphs);
+    append_glyphs(name, 0, 0, ch, label.caption_glyphs);
 }
 
 bool ViewportWindow::cmd_entry_handle_key(int key, const QString& text) {
@@ -4098,8 +4161,8 @@ bool ViewportWindow::cmd_entry_handle_key(int key, const QString& text) {
 void ViewportWindow::build_command_ui(render::CanvasCommandUI& ui) {
     ui.active = true;
     const double dpr = devicePixelRatio();
-    const double h = 16.0 * dpr;        // input glyph cap height
-    const double rh = 14.0 * dpr;       // dropdown glyph cap height
+    const double h = 12.0 * dpr;        // input glyph cap height
+    const double rh = 11.0 * dpr;       // dropdown glyph cap height
     const double padx = 8.0 * dpr;
     const double pady = 5.0 * dpr;
     const double inrow = h + 2.0 * pady;
@@ -4118,21 +4181,31 @@ void ViewportWindow::build_command_ui(render::CanvasCommandUI& ui) {
     };
 
     // Clamp the panel so it stays on-screen (anchored where it first appeared).
-    const double vw = static_cast<double>(width()) * dpr;
-    const double ax = std::min(cmd_anchor_px_.x + 18.0 * dpr, vw - 320.0 * dpr);
-    const double ay = cmd_anchor_px_.y + 18.0 * dpr;
+    const core::Vec2 extent = dyn_viewport_size();
+    const double vw = extent.x;
+    const double vh = extent.y;
 
     // Input box.
-    const double tw = adv(cmd_entry_, h);
+    const std::string entry = fit_ui_text(cmd_entry_, h, std::max(0.0, vw - 40.0*dpr), true);
+    const double tw = adv(entry, h);
     double bw = std::max(tw + 2.0 * padx, 150.0 * dpr);
-    const int rows = std::min(static_cast<int>(cmd_suggestions_.size()), 9);
+    const int rows = std::min({static_cast<int>(cmd_suggestions_.size()), 9,
+        std::max(0, static_cast<int>((vh - inrow - 12*dpr) / droprow))});
+    const int first = std::clamp(cmd_sel_ - rows + 1, 0,
+        std::max(0, static_cast<int>(cmd_suggestions_.size()) - rows));
     for (int i = 0; i < rows; ++i) {
-        const std::string s = cmd_suggestions_[static_cast<std::size_t>(i)].alias + "    " +
-                              cmd_suggestions_[static_cast<std::size_t>(i)].name;
+        const std::string s = cmd_suggestions_[static_cast<std::size_t>(first + i)].alias + "    " +
+                              cmd_suggestions_[static_cast<std::size_t>(first + i)].name;
         bw = std::max(bw, adv(s, rh) + 2.0 * padx);
     }
+    bw = std::min(bw, std::max(1.0, vw-8*dpr));
+    const double total = inrow + static_cast<double>(rows)*droprow;
+    const double ax = std::clamp(cmd_anchor_px_.x+18*dpr, 4*dpr, std::max(4*dpr,vw-bw-4*dpr));
+    const double ay = std::clamp(cmd_anchor_px_.y+18*dpr, 4*dpr, std::max(4*dpr,vh-total-4*dpr));
+    ui.bounds = {{ax,ay},{ax+bw,ay+total}};
+    quad(ui.shadow_fills, ax+2*dpr, ay+2*dpr, bw, total);
     quad(ui.box_fills, ax, ay, bw, inrow);
-    append_glyphs(cmd_entry_, ax + padx, ay + pady + h, h, ui.glyph_fills);
+    append_glyphs(entry, ax + padx, ay + pady + h, h, ui.glyph_fills);
     const double cx = ax + padx + tw + 1.0 * dpr; // caret
     ui.lines.push_back({cx, ay + pady});
     ui.lines.push_back({cx, ay + pady + h});
@@ -4142,12 +4215,12 @@ void ViewportWindow::build_command_ui(render::CanvasCommandUI& ui) {
     for (int i = 0; i < rows; ++i) {
         const double ry = ay + inrow + static_cast<double>(i) * droprow;
         quad(ui.box_fills, ax, ry, bw, droprow);
-        if (i == std::clamp(cmd_sel_, 0, rows - 1)) {
+        if (first + i == cmd_sel_) {
             quad(ui.hi_fills, ax, ry, bw, droprow);
         }
-        const std::string s = cmd_suggestions_[static_cast<std::size_t>(i)].alias + "    " +
-                              cmd_suggestions_[static_cast<std::size_t>(i)].name;
-        append_glyphs(s, ax + padx, ry + pady + rh, rh, ui.glyph_fills);
+        const std::string s = cmd_suggestions_[static_cast<std::size_t>(first + i)].alias + "    " +
+                              cmd_suggestions_[static_cast<std::size_t>(first + i)].name;
+        append_glyphs(fit_ui_text(s, rh, bw-2*padx), ax + padx, ry + pady + rh, rh, ui.glyph_fills);
     }
     if (rows > 0) {
         outline(ui.lines, ax, ay + inrow, bw, static_cast<double>(rows) * droprow);
@@ -4247,7 +4320,7 @@ bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
 void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
     ui.active = true;
     const double dpr = devicePixelRatio();
-    const double h = 15.0 * dpr;
+    const double h = 12.0 * dpr;
     const double padx = 8.0 * dpr;
     const double pady = 5.0 * dpr;
     const double row = h + 2.0 * pady;
@@ -4258,7 +4331,15 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
                    : static_cast<double>(s.size()) * h * 0.55;
     };
     const std::string prompt = processor_ != nullptr ? processor_->current_prompt() : std::string{};
-    const std::string label = dynprompt_.load() != 0 ? prompt : std::string{}; // DYNPROMPT 0: no prompt
+    std::string label = dynprompt_.load() != 0 ? prompt : std::string{}; // DYNPROMPT 0: no prompt
+    // Long keyword lists belong in the existing Down-arrow menu, rather than a
+    // half-visible row over the drawing. Keep short choices and trailing defaults.
+    const auto options_begin = label.find('[');
+    const auto options_end = label.find(']', options_begin);
+    if (options_begin != std::string::npos && options_end != std::string::npos &&
+        options_end - options_begin > 18) {
+        label.replace(options_begin, options_end - options_begin + 1, "[↓]");
+    }
     // The field: what has been typed, else the live value of a ROTATE / SCALE band (the
     // angle or the factor the cursor stands for, in the drawing's units -- AutoCAD's
     // Dynamic Input shows it the same way, and typing replaces it), else pointer input's:
@@ -4285,25 +4366,49 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
             value = core::units::format_length(at.x, u) + "," + core::units::format_length(at.y, u);
         }
     }
-    const double lw = adv(label);
-    const double gap = value.empty() ? 0.0 : 6.0 * dpr;
-    const double vw = adv(value);
-    const double bw = lw + gap + vw + 2.0 * padx + 10.0 * dpr; // trailing room for the caret
-
-    // At-cursor anchor (follows the cursor), clamped on-screen.
-    const double scrw = static_cast<double>(width()) * dpr;
-    const double ax = std::min(cursor_px_x_.load(std::memory_order_relaxed) + 18.0 * dpr,
-                               std::max(0.0, scrw - bw));
-    const double ay = cursor_px_y_.load(std::memory_order_relaxed) + 18.0 * dpr;
-
-    ui_quad(ui.box_fills, ax, ay, bw, row);
-    const double baseline = ay + pady + h;
-    append_glyphs(label, ax + padx, baseline, h, ui.glyph_fills);
-    append_glyphs(value, ax + padx + lw + gap, baseline, h, ui.glyph_fills);
-    const double cx = ax + padx + lw + gap + vw + 2.0 * dpr;
-    ui.lines.push_back({cx, ay + pady});
-    ui.lines.push_back({cx, ay + pady + h});
-    ui_outline(ui.lines, ax, ay, bw, row);
+    const bool dimensions = dyn_capturing();
+    const core::Vec2 extent = dyn_viewport_size();
+    const double scrw = extent.x;
+    const double scrh = extent.y;
+    const double maxw = std::max(1.0, std::min(440*dpr, scrw-8*dpr));
+    const std::string prompt_text = fit_ui_text(label, h, maxw-2*padx);
+    const bool has_options = prompt.find('[') != std::string::npos;
+    std::string hint;
+    if (dimensions) {
+        hint = dyn_field_count() > 1 ? "Tab  switch field   ·   Enter  accept" : "Enter  accept";
+        if (has_options) hint += "   ·   ↓  options";
+    } else if (has_options) {
+        hint = "↓  options";
+    }
+    const double hh = 9*dpr;
+    const std::string help = fit_ui_text(hint, hh, maxw-2*padx);
+    const bool show_prompt = !prompt_text.empty();
+    const double prompt_height = show_prompt ? row : 0.0;
+    const double help_height = help.empty() ? 0.0 : 19*dpr;
+    const double value_height = dimensions ? 0.0 : row+2*dpr;
+    const std::string shown = fit_ui_text(value.empty() ? "Type a value" : value, h, maxw-2*padx-8*dpr, true);
+    const double bw = std::min(maxw, std::max({160*dpr, adv(prompt_text)+2*padx,
+        dimensions ? 0.0 : adv(shown)+2*padx+8*dpr, cmd_advance(help,hh)+2*padx}));
+    const double bh = prompt_height + value_height + help_height;
+    const double ax = std::clamp(cursor_px_x_.load(std::memory_order_relaxed)+18*dpr,
+                                 4*dpr, std::max(4*dpr,scrw-bw-4*dpr));
+    const double ay = std::clamp(cursor_px_y_.load(std::memory_order_relaxed)+(dimensions ? 38 : 18)*dpr,
+                                 4*dpr, std::max(4*dpr,scrh-bh-4*dpr));
+    ui.bounds = {{ax,ay},{ax+bw,ay+bh}};
+    ui_quad(ui.shadow_fills,ax+2*dpr,ay+2*dpr,bw,bh);
+    ui_quad(ui.box_fills,ax,ay,bw,bh);
+    ui_outline(ui.lines,ax,ay,bw,bh);
+    if (show_prompt) append_glyphs(prompt_text, ax+padx, ay+pady+h, h, ui.glyph_fills);
+    if (!dimensions) {
+        const double vy=ay+prompt_height;
+        ui_outline(ui.accent_lines,ax,vy,bw,value_height);
+        append_glyphs(shown,ax+padx,vy+pady+h,h,value.empty() ? ui.muted_glyphs : ui.glyph_fills);
+        if (!sub_entry_.empty()) {
+            const double cx=ax+padx+adv(shown)+2*dpr;
+            ui.accent_lines.insert(ui.accent_lines.end(),{{cx,vy+pady},{cx,vy+pady+h}});
+        }
+    }
+    if (!help.empty()) append_glyphs(help,ax+padx,ay+prompt_height+value_height+13*dpr,hh,ui.muted_glyphs);
 }
 
 // On-canvas Dynamic Input keystroke routing. Returns true if the key was consumed by a

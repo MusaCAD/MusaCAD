@@ -844,7 +844,7 @@ private:
     /// the cursor moves -- only its anchor does -- so the per-move work is a translate of
     /// cached vertices rather than a re-walk of the font engine, which for a 50-character
     /// prompt was the whole of the "lag at the base point" (20 ms per mouse move).
-    std::unordered_map<std::string, std::vector<core::Vec2>> glyph_run_cache_;
+    std::unordered_map<std::string, std::vector<render::CanvasGlyphVertex>> glyph_run_cache_;
     std::unordered_map<std::string, double> advance_cache_;
     [[nodiscard]] double cmd_advance(const std::string& text, double h);
     std::string cmd_entry_;                    // typed command text
@@ -855,9 +855,9 @@ private:
     void cmd_clear() noexcept;
     void cmd_recompute();                       ///< refresh suggestions + reset selection
     [[nodiscard]] std::string cmd_font() ;      ///< the resolved outline face (lazy)
-    /// Append TTF glyph triangles (screen px, y-flipped) for `text` at (ox, baseline_y).
+    /// Append cached antialiased UI-font coverage at (ox, baseline_y), device pixels.
     void append_glyphs(const std::string& text, double ox, double baseline_y, double h,
-                       std::vector<core::Vec2>& out);
+                       std::vector<render::CanvasGlyphVertex>& out);
     void build_command_ui(render::CanvasCommandUI& ui); ///< lay out box + dropdown near cursor
 
     // On-canvas mid-command sub-prompt (FILLET radius, CHAMFER distances, option
@@ -866,6 +866,9 @@ private:
     std::string sub_entry_; // typed value/keyword for the current sub-prompt
     std::string typed_text_; // the command line's input field, as typed
     void build_sub_prompt_ui(render::CanvasCommandUI& ui);
+    [[nodiscard]] core::Vec2 dyn_viewport_size() const;
+    void prepare_dyn_label(render::DynLabel& label, const std::string& caption = {});
+    std::string fit_ui_text(const std::string& text, double h, double max_width, bool keep_end = false);
 
     // Selection drag state (UI thread).
     bool selecting_ = false;

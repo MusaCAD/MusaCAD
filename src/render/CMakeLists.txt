@@ -9,6 +9,8 @@ musacad_embed_shaders("${_shader_header}"
     "${CMAKE_SOURCE_DIR}/shaders/thickline.frag"
     "${CMAKE_SOURCE_DIR}/shaders/fill.vert"
     "${CMAKE_SOURCE_DIR}/shaders/fill.frag"
+    "${CMAKE_SOURCE_DIR}/shaders/canvas_text.vert"
+    "${CMAKE_SOURCE_DIR}/shaders/canvas_text.frag"
     "${CMAKE_SOURCE_DIR}/shaders/image.vert"
     "${CMAKE_SOURCE_DIR}/shaders/image.frag"
     "${CMAKE_SOURCE_DIR}/shaders/thickline_depth.vert"
@@ -20,6 +22,7 @@ add_library(musacad_render STATIC
     camera.cpp
     grid.cpp
     frame_stats.cpp
+    dyn_layout.cpp
     stroke_font.cpp
     viewport_renderer.cpp
     gl_backend.cpp

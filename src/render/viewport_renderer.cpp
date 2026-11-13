@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 
+#include "musacad/render/dyn_layout.hpp"
+
 #include "musacad/render/viewport_renderer.hpp"
 
 #include <algorithm>
@@ -94,6 +96,16 @@ PipelineDesc make_image_pipeline_desc() {
     d.attributes = {VertexAttribute{0, 0, 2, 0, 0},                   // vec2 position
                     VertexAttribute{1, 0, 2, sizeof(float) * 2, 0}};  // vec2 uv
     d.bindings = {VertexBinding{0, sizeof(float) * 4}};
+    d.topology = Topology::Triangles;
+    return d;
+}
+
+PipelineDesc make_canvas_text_pipeline_desc() {
+    PipelineDesc d;
+    d.vertex_src = shaders::canvas_text_vert;
+    d.fragment_src = shaders::canvas_text_frag;
+    d.attributes = {VertexAttribute{0, 0, 2, 0, 0}, VertexAttribute{1, 0, 1, sizeof(float) * 2, 0}};
+    d.bindings = {VertexBinding{0, sizeof(float) * 3}};
     d.topology = Topology::Triangles;
     return d;
 }
@@ -298,6 +310,7 @@ ViewportRenderer::ViewportRenderer(GpuDevice& device) : device_(device) {
     fill_pipeline_ = device_.create_pipeline(make_fill_pipeline_desc());
     scene_fill_pipeline_ = device_.create_pipeline(make_scene_fill_pipeline_desc());
     image_pipeline_ = device_.create_pipeline(make_image_pipeline_desc());
+    canvas_text_pipeline_ = device_.create_pipeline(make_canvas_text_pipeline_desc());
     image_buffer_ = device_.create_buffer(BufferUsage::Stream);
     line_instances_ = device_.create_buffer(BufferUsage::Dynamic);
     point_instances_ = device_.create_buffer(BufferUsage::Dynamic);
@@ -866,113 +879,15 @@ void ViewportRenderer::draw_overlay(GpuCommandBuffer& cmd, int width, int height
 
 void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int height,
                                        const Camera2D& camera) {
-    if (overlay().dyn_labels.empty()) {
-        return;
-    }
-    const double dpr = static_cast<double>(device_pixel_ratio_);
-    const double h = 15.0 * dpr;       // glyph height (device px)
-    const double pad = 6.0 * dpr;      // box padding
-    const double caret_gap = 3.0 * dpr;
-
-    std::vector<core::Vec2> fills;     // box backgrounds (triangles: 6 verts/box)
-    std::vector<core::Vec2> lines;     // unfocused borders + ALL text + caret
-    std::vector<core::Vec2> focus;     // focused box border (brighter)
-
-    for (const DynLabel& label : overlay().dyn_labels) {
-        const core::Vec2 s = camera.world_to_screen(label.anchor); // device px
-        std::vector<core::Vec2> txt;
-        // Prose: the stroke text font laid out y-up on its baseline, flipped into the
-        // box's y-down pixels below. Its capitals are the field digits' height.
-        const double tw = label.prose ? core::text::text_width(label.text, h)
-                                      : append_text_segments(label.text, {0.0, 0.0}, h, txt);
-        const double bw = tw + 2.0 * pad + (label.focused ? caret_gap + 2.0 * dpr : 0.0);
-        const double bh = h + 2.0 * pad;
-        // Nudge the box OUTWARD from the geometry (along the projected `out` dir) so it
-        // sits just outside the edge and the fields never overlap each other.
-        core::Vec2 c = s;
-        if (label.out.x != 0.0 || label.out.y != 0.0) {
-            const core::Vec2 o = camera.world_to_screen(label.anchor + label.out);
-            const core::Vec2 d = o - s;
-            const double len = core::length(d);
-            if (len > 1e-6) {
-                const core::Vec2 dir{d.x / len, d.y / len};
-                const double push =
-                    0.5 * (std::abs(dir.x) * bw + std::abs(dir.y) * bh) + 8.0 * dpr;
-                c = {s.x + dir.x * push, s.y + dir.y * push};
-            }
-        }
-        const double bx = c.x - bw * 0.5;
-        const double by = c.y - bh * 0.5;
-
-        // Filled dark background (two triangles).
-        fills.push_back({bx, by});
-        fills.push_back({bx + bw, by});
-        fills.push_back({bx + bw, by + bh});
-        fills.push_back({bx, by});
-        fills.push_back({bx + bw, by + bh});
-        fills.push_back({bx, by + bh});
-
-        // Border (brighter when focused).
-        std::vector<core::Vec2>& border = label.focused ? focus : lines;
-        edge(border, {bx, by}, {bx + bw, by});
-        edge(border, {bx + bw, by}, {bx + bw, by + bh});
-        edge(border, {bx + bw, by + bh}, {bx, by + bh});
-        edge(border, {bx, by + bh}, {bx, by});
-
-        // The number text.
-        if (label.prose) {
-            std::vector<core::Vec2> glyphs;
-            core::text::append_text_segments(label.text, {0.0, 0.0}, h, 0.0, core::text::Justify::Left, glyphs);
-            for (const core::Vec2& g : glyphs) {
-                lines.push_back({bx + pad + g.x, by + pad + h - g.y});
-            }
-        } else {
-            append_text_segments(label.text, {bx + pad, by + pad}, h, lines);
-        }
-
-        // Text caret on the active field.
-        if (label.focused) {
-            const double cx = bx + pad + tw + caret_gap;
-            edge(lines, {cx, by + pad}, {cx, by + pad + h});
-        }
-    }
-
-    const core::Mat3 screen = screen_to_ndc(width, height);
-
-    if (!fills.empty()) {
-        const std::size_t n = pack_positions(fills, scratch_);
-        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
-        cmd.bind_pipeline(*fill_pipeline_);
-        cmd.set_uniform_mat3("u_transform", screen);
-        cmd.set_uniform_vec4("u_color", 0.16f, 0.17f, 0.20f, 0.96f); // visible dark box fill
-        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
-        cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
-        ++stats_.draw_calls;
-    }
-
-    cmd.bind_pipeline(*line_pipeline_);
-    cmd.set_uniform_mat3("u_transform", screen);
-    if (!lines.empty()) {
-        const std::size_t n = pack_segments(lines, scratch_);
-        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
-        cmd.set_uniform_vec4("u_color", kOverlayColor[0], kOverlayColor[1], kOverlayColor[2],
-                             kOverlayColor[3]);
-        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
-        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
-        ++stats_.draw_calls;
-    }
-    if (!focus.empty()) {
-        const std::size_t n = pack_segments(focus, scratch_);
-        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
-        cmd.set_uniform_vec4("u_color", 0.48f, 0.78f, 1.0f, 1.0f); // active-field highlight
-        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
-        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
-        ++stats_.draw_calls;
-    }
+    draw_canvas_ui(cmd, width, height,
+                   layout_dyn_labels(overlay().dyn_labels, camera, device_pixel_ratio_, overlay().command_ui.bounds));
 }
 
 void ViewportRenderer::draw_canvas_command(GpuCommandBuffer& cmd, int width, int height) {
-    const CanvasCommandUI& ui = overlay().command_ui;
+    draw_canvas_ui(cmd, width, height, overlay().command_ui);
+}
+
+void ViewportRenderer::draw_canvas_ui(GpuCommandBuffer& cmd, int width, int height, const CanvasCommandUI& ui) {
     if (!ui.active) {
         return;
     }
@@ -990,15 +905,44 @@ void ViewportRenderer::draw_canvas_command(GpuCommandBuffer& cmd, int width, int
         cmd.draw_instanced(static_cast<std::uint32_t>(n), 1);
         ++stats_.draw_calls;
     };
+    fill(ui.shadow_fills, 0.025f, 0.03f, 0.04f, 0.5f);
     fill(ui.box_fills, 0.12f, 0.13f, 0.16f, 0.96f);   // panel / cells (dark)
     fill(ui.hi_fills, 0.18f, 0.34f, 0.52f, 0.96f);    // highlighted suggestion row
-    fill(ui.glyph_fills, 0.90f, 0.92f, 0.95f, 1.0f);  // TTF text (one batch, all rows)
+    const auto text = [&](const std::vector<CanvasGlyphVertex>& tris, float r, float g, float b) {
+        if (tris.empty()) return;
+        scratch_.clear();
+        scratch_.reserve(tris.size() * 3);
+        for (const auto& v : tris) {
+            scratch_.push_back(static_cast<float>(v.position.x));
+            scratch_.push_back(static_cast<float>(v.position.y));
+            scratch_.push_back(v.coverage);
+        }
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.bind_pipeline(*canvas_text_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        cmd.set_uniform_vec4("u_color", r, g, b, 1.0f);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
+        cmd.draw_instanced(static_cast<std::uint32_t>(tris.size()), 1);
+        ++stats_.draw_calls;
+    };
+    text(ui.glyph_fills, 0.90f, 0.92f, 0.95f);
+    text(ui.muted_glyphs, 0.62f, 0.68f, 0.76f);
     if (!ui.lines.empty()) {
         const std::size_t n = pack_segments(ui.lines, scratch_);
         overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
         cmd.bind_pipeline(*line_pipeline_);
         cmd.set_uniform_mat3("u_transform", screen);
         cmd.set_uniform_vec4("u_color", 0.40f, 0.55f, 0.75f, 1.0f); // borders + caret
+        cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+    if (!ui.accent_lines.empty()) {
+        const std::size_t n = pack_segments(ui.accent_lines, scratch_);
+        overlay_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.bind_pipeline(*line_pipeline_);
+        cmd.set_uniform_mat3("u_transform", screen);
+        cmd.set_uniform_vec4("u_color", 0.38f, 0.73f, 1.0f, 1.0f);
         cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
         cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
         ++stats_.draw_calls;

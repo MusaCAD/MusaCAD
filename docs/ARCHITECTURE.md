@@ -1401,6 +1401,23 @@ suggestion logic.
 
 ## Dynamic Input (DYN / F12) — type at the cursor (Phase 25)
 
+### Current canvas presentation (v0.9.0)
+
+The viewport rasterizes dimension captions, values and tracking text with the platform
+UI font on the UI thread, using bounded glyph-run and advance caches. Adjacent pixels
+with equal coverage become spans of triangles. `DynLabel` carries immutable local
+coverage vertices and measurements to the render thread. A dedicated text shader blends
+the coverage, giving antialiased type without multisampling the drawing geometry. `layout_dyn_labels`
+projects anchors through the current render camera, clamps boxes to the viewport and
+avoids earlier fields and the command prompt. The common canvas batch renderer draws
+backgrounds, selection, filled glyphs, borders, carets and constraint locks. No Qt font
+calls or command parsing run on the render thread. Command prompts and input values
+occupy separate rows; dimensional prompts include keyboard hints. The input buffers and
+command state machines remain the source of truth, independent of display elision.
+
+The earlier implementation notes below describe the evolution of the input routing.
+
+
 AutoCAD-style Dynamic Input: a cursor-anchored surface so the user types commands
 and values AT the crosshair. It is a new **input surface**, not new command logic.
 

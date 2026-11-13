@@ -148,6 +148,7 @@ private:
     /// On-canvas command-input surface (entry box + autocomplete + sub-prompts). The
     /// primitives are pre-laid-out screen-space by the UI thread; this just batches them.
     void draw_canvas_command(GpuCommandBuffer& cmd, int width, int height);
+    void draw_canvas_ui(GpuCommandBuffer& cmd, int width, int height, const CanvasCommandUI& ui);
     void draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
                                  const core::RenderSnapshot& snapshot, const Camera2D& camera);
     void draw_construction_lines(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,
@@ -161,6 +162,7 @@ private:
     std::unique_ptr<GpuPipeline> thick_pipeline_; // scene lines (screen-space width)
     std::unique_ptr<GpuPipeline> fill_pipeline_;  // filled triangles (overlays: the sheet, highlights)
     std::unique_ptr<GpuPipeline> scene_fill_pipeline_; // the scene's fills, with their draw order (depth)
+    std::unique_ptr<GpuPipeline> canvas_text_pipeline_;
     std::unique_ptr<GpuPipeline> image_pipeline_; // textured quads (IMAGE entities)
     std::unique_ptr<GpuBuffer> image_buffer_;     // the image quads' vertices (stream)
     std::unique_ptr<GpuBuffer> line_instances_;

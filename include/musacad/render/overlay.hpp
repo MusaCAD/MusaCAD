@@ -10,34 +10,52 @@
 
 namespace musacad::render {
 
+/// A UI-font coverage triangle vertex. Rasterized once on the UI thread, then batched
+/// on the GPU with coverage alpha; no textures or global scene multisampling required.
+struct CanvasGlyphVertex {
+    core::Vec2 position;
+    float coverage = 1.0f;
+};
+
 /// One AutoCAD-style Dynamic Input value field drawn ON the canvas (not an OS
 /// window), so it is always glued to the geometry it describes. The renderer
 /// projects `anchor` (world) with the SAME camera as the rubber-band, then draws a
-/// small boxed number there. `focused` marks the active type-into field (brighter +
+/// small boxed number there. `focused` marks the active type-into field (highlighted value or
 /// caret). Canvas rendering replaces the floating tooltip windows, which drifted
 /// off the geometry on multi-monitor / certain window managers.
 struct DynLabel {
     core::Vec2 anchor{};  ///< world-space anchor on the live geometry (edge midpoint, etc.)
     core::Vec2 out{};     ///< world-space OUTWARD unit dir; the box is nudged this way (screen)
                           ///< so it sits just OUTSIDE the edge and fields never overlap
-    std::string text;     ///< value string (digits / '.' / '-'), drawn by the stroke font
+    std::string text;     ///< displayed value, shaped on the UI thread
     bool focused = false; ///< the active field: brighter border + a text caret
-    /// Words, not a value (the tracking tooltip "Polar: 12.5 < 45°"): drawn with the
-    /// drawing's stroke font, which has letters and symbols the field digits lack.
+    /// Informational tracking tooltip, without a dimension caption or editable state.
     bool prose = false;
+    bool locked = false;  ///< a valid typed value constrains the preview
+    bool editing = false; ///< show a caret only when there is typed text
+    double value_width = 0.0;
+    double caption_width = 0.0;
+    /// Antialiased UI-font coverage in local device pixels, y down. No font calls on the render thread.
+    std::vector<CanvasGlyphVertex> value_glyphs;
+    std::vector<CanvasGlyphVertex> caption_glyphs;
 };
 
 /// The on-canvas command-input surface (idle command entry + autocomplete dropdown,
 /// and mid-command sub-prompts), pre-laid-out by the UI thread into SCREEN-space
-/// primitives so the renderer just draws them -- the TTF glyph triangles come from the
-/// font engine (UI thread), the boxes/borders are plain quads/lines. Bounded draw
+/// primitives so the renderer just draws them -- the antialiased glyph coverage comes from
+/// the UI thread, the boxes/borders are plain quads/lines. Bounded draw
 /// calls: one batch each for fills, glyphs and lines regardless of suggestion count.
 struct CanvasCommandUI {
     bool active = false;
     std::vector<core::Vec2> box_fills;    ///< panel/box backgrounds (triangles, screen px)
     std::vector<core::Vec2> hi_fills;     ///< highlighted suggestion row background (triangles)
-    std::vector<core::Vec2> glyph_fills;  ///< TTF glyph triangles for ALL text (one batch)
+    std::vector<CanvasGlyphVertex> glyph_fills;  ///< TTF glyph triangles for ALL text (one batch)
     std::vector<core::Vec2> lines;        ///< box borders + caret (line segments)
+    std::vector<CanvasGlyphVertex> muted_glyphs;
+    std::vector<core::Vec2> shadow_fills;
+    std::vector<core::Vec2> accent_lines;
+    /// Occupied rectangles (top-left, bottom-right pairs), used to keep dimension fields clear.
+    std::vector<core::Vec2> bounds;
 };
 
 /// Transient, render-side interaction visuals: the live command preview
