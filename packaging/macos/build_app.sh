@@ -13,6 +13,7 @@
 set -euo pipefail
 
 VERSION="${1:?VERSION}"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected X.Y.Z version" >&2; exit 1; }
 BIN="${2:?path to musacad_app}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
@@ -52,12 +53,19 @@ else
   echo "WARNING: rsvg-convert not found; the bundle has no icon"
 fi
 
+# Explicitly deploy dynamically loaded plugins before signing. The SVG image reader
+# draws ribbon icons; linking only QtGui/Widgets does not make macdeployqt detect it.
+DEPLOY_ARGS=()
+for plugin in platforms/libqoffscreen.dylib imageformats/libqsvg.dylib iconengines/libqsvgicon.dylib; do
+  mkdir -p "$APP/Contents/PlugIns/$(dirname "$plugin")"
+  install -m 755 "$QT_PLUGINS/$plugin" "$APP/Contents/PlugIns/$plugin"
+  DEPLOY_ARGS+=("-executable=$APP/Contents/PlugIns/$plugin")
+done
 echo "==> macdeployqt"
-"$QT_BIN/macdeployqt" "$APP" -verbose=1
-# `--plot` runs on Qt's offscreen platform; macdeployqt bundles only cocoa by itself. The
-# plugin's Qt dependencies are already in the bundle (it links the same QtGui / QtCore
-# through @rpath, resolved against the executable's Frameworks rpath).
-install -m 755 "$QT_PLUGINS/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
+"$QT_BIN/macdeployqt" "$APP" -verbose=1 "${DEPLOY_ARGS[@]}"
 
+# Deployment changes Mach-O load commands, invalidating upstream signatures. Even
+# without Developer ID credentials, an Apple Silicon bundle needs valid ad-hoc signatures.
+"$HERE/sign_app.sh" "$APP" "${MACOS_SIGN_IDENTITY:--}"
 echo "==> Built: $APP"
 ls -la "$APP/Contents/MacOS" "$APP/Contents/PlugIns/platforms"

@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // A placed raster image: two textured triangles in world space (IMAGE entities).
 layout(location = 0) in vec2 i_position;

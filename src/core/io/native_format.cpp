@@ -18,9 +18,13 @@ namespace musacad::core::io {
 namespace {
 
 void append_double(std::string& s, double v) {
+#if defined(MUSACAD_FORMAT_DOUBLE_FALLBACK)
+    s += format_double_g(v, std::numeric_limits<double>::max_digits10);
+#else
     char buf[40];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
     s.append(buf, ptr);
+#endif
 }
 void append_vec(std::string& s, Vec2 v) {
     append_double(s, v.x);

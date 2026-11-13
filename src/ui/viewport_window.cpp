@@ -50,6 +50,7 @@
 #include <QPolygon>
 #include <QMenu>
 #include <QOpenGLContext>
+#include <QOffscreenSurface>
 #include <QPlatformSurfaceEvent>
 #include <QResizeEvent>
 #include <QScreen>
@@ -110,18 +111,59 @@ void ui_outline(std::vector<core::Vec2>& v, double x, double y, double w, double
 }
 } // namespace
 
+// A render session owns its context and resources on one thread for its entire life.
+// Cocoa runs sessions on the GUI thread; Linux and Windows run them on the worker.
+struct ViewportWindow::RenderSession {
+    QOpenGLContext context;
+    QOffscreenSurface* cleanup_surface = nullptr; // created/destroyed on the GUI thread
+    std::unique_ptr<render::GpuDevice> device;
+    std::unique_ptr<render::GpuRenderTarget> target;
+    std::unique_ptr<render::ViewportRenderer> renderer;
+    render::FrameStats stats;
+    bool smoke = std::getenv("MUSACAD_SMOKE") != nullptr;
+    int smoke_frames = 0;
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    double last_world_per_px = 0.0;
+    bool pacing_enabled = false;
+    bool timing = std::getenv("MUSACAD_TIMING") != nullptr;
+    double period_ms = 0.0, render_max_ms = 0.0, slept_ms = 0.0, touch_ms = 0.0;
+    bool paced = false;
+    std::chrono::steady_clock::time_point refresh_anchor = std::chrono::steady_clock::now();
+    std::int64_t last_stamp = 0;
+    double lat_sum = 0.0, lat_max = 0.0;
+    int lat_n = 0;
+
+    ~RenderSession() {
+        // The window may be hidden or its native surface gone. The offscreen surface
+        // lets teardown release GL resources without binding a destroyed window.
+        if (context.isValid() && cleanup_surface != nullptr) {
+            context.makeCurrent(cleanup_surface);
+        }
+        renderer.reset();
+        target.reset();
+        device.reset();
+        context.doneCurrent();
+    }
+};
+
 ViewportWindow::ViewportWindow(core::GeometryEngine& engine, QWindow* parent)
     : QWindow(parent), engine_(engine) {
     setSurfaceType(QWindow::OpenGLSurface);
     QSurfaceFormat fmt;
     // Desktop OpenGL, said outright: left to its default, Qt asks NVIDIA's EGL (Wayland) for
-    // OpenGL ES (QTBUG-105921), and there is no ES 4.5 to be had (#82).
+    // OpenGL ES (QTBUG-105921), and there is no ES 4.1 to be had (#82).
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
-    fmt.setVersion(4, 5);
+    fmt.setVersion(4, 1);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setDepthBufferSize(24); // the scene's draw order (DRAWORDER) is drawn by depth
     fmt.setSwapInterval(1); // vsync
     setFormat(fmt);
+#ifdef Q_OS_MACOS
+    render_on_gui_ = true;
+#else
+    // Exercise the Cocoa scheduling/lifecycle path in Linux regression tests.
+    render_on_gui_ = qEnvironmentVariableIsSet("MUSACAD_GUI_RENDER");
+#endif
 }
 
 ViewportWindow::~ViewportWindow() { stop_render_thread(); }
@@ -1435,12 +1477,21 @@ bool ViewportWindow::event(QEvent* e) {
     if (e->type() == QEvent::PlatformSurface &&
         static_cast<QPlatformSurfaceEvent*>(e)->surfaceEventType() ==
             QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
-        park_render_thread(); // never render into a surface that is going away (#97)
+        if (render_on_gui_) {
+            stop_render_thread();
+        } else {
+            park_render_thread(); // never render into a surface that is going away (#97)
+        }
     }
     return QWindow::event(e);
 }
 
 void ViewportWindow::park_render_thread() noexcept {
+    if (render_on_gui_) {
+        if (gui_render_timer_ != nullptr) gui_render_timer_->stop();
+        if (gui_render_ != nullptr) gui_render_->context.doneCurrent();
+        return;
+    }
     std::unique_lock lock(park_mutex_);
     park_requested_ = true;
     park_cv_.notify_all();
@@ -1450,6 +1501,10 @@ void ViewportWindow::park_render_thread() noexcept {
 }
 
 void ViewportWindow::unpark_render_thread() noexcept {
+    if (render_on_gui_) {
+        if (gui_render_ != nullptr && gui_render_timer_ != nullptr) gui_render_timer_->start();
+        return;
+    }
     {
         std::scoped_lock lock(park_mutex_);
         park_requested_ = false;
@@ -1460,6 +1515,28 @@ void ViewportWindow::unpark_render_thread() noexcept {
 void ViewportWindow::resizeEvent(QResizeEvent*) { update_viewport_size(); }
 
 void ViewportWindow::start_render_thread() {
+    if (!cleanup_surface_) {
+        cleanup_surface_ = std::make_unique<QOffscreenSurface>();
+        cleanup_surface_->setFormat(format());
+        cleanup_surface_->create();
+    }
+    if (render_on_gui_) {
+        if (gui_render_) return;
+        gui_render_ = create_render_session();
+        if (!gui_render_) return;
+        if (gui_render_timer_ == nullptr) {
+            gui_render_timer_ = new QTimer(this);
+            gui_render_timer_->setTimerType(Qt::PreciseTimer);
+            connect(gui_render_timer_, &QTimer::timeout, this, [this] {
+                if (!isExposed() || !gui_render_ || !render_frame(*gui_render_)) {
+                    gui_render_timer_->stop();
+                }
+            });
+        }
+        const double hz = screen() != nullptr ? screen()->refreshRate() : 60.0;
+        gui_render_timer_->start(std::max(1, static_cast<int>(std::lround(1000.0 / std::max(1.0, hz)))));
+        return;
+    }
     if (render_thread_.joinable()) {
         return;
     }
@@ -1468,6 +1545,11 @@ void ViewportWindow::start_render_thread() {
 }
 
 void ViewportWindow::stop_render_thread() noexcept {
+    if (render_on_gui_) {
+        if (gui_render_timer_ != nullptr) gui_render_timer_->stop();
+        gui_render_.reset();
+        return;
+    }
     if (render_thread_.joinable()) {
         render_thread_.request_stop();
         {
@@ -1481,8 +1563,7 @@ void ViewportWindow::stop_render_thread() noexcept {
 QString ViewportWindow::gl_requirement_message(int major, int minor, const QString& renderer,
                                                bool on_macos) {
     QString m = QStringLiteral(
-        "Musa CAD's viewport needs OpenGL 4.5 Core (it draws through direct state access "
-        "and persistently mapped buffers), and this system provides OpenGL %1.%2");
+        "Musa CAD's viewport needs OpenGL 4.1 Core, and this system provides OpenGL %1.%2");
     m = m.arg(major).arg(minor);
     if (!renderer.isEmpty()) {
         m += QStringLiteral(" (%1)").arg(renderer);
@@ -1490,18 +1571,532 @@ QString ViewportWindow::gl_requirement_message(int major, int minor, const QStri
     m += QStringLiteral(".\n\n");
     if (on_macos) {
         m += QStringLiteral(
-            "macOS stops at OpenGL 4.1, so no driver update helps there: Musa CAD needs a Metal "
-            "or OpenGL 4.1 render backend, which it does not have yet (issue #2 at "
-            "github.com/MusaCAD/MusaCAD).\n\n");
+            "Musa CAD supports the OpenGL 4.1 Core profile provided by macOS. "
+            "This session could not provide a compatible context; try a local desktop session "
+            "and check for macOS updates.\n\n");
     } else {
         m += QStringLiteral(
-            "A current graphics driver, or a GPU that supports OpenGL 4.5, is what it takes; "
+            "A current graphics driver, or a GPU that supports OpenGL 4.1, is what it takes; "
             "on a virtual machine, enable 3D acceleration.\n\n");
     }
     m += QStringLiteral(
         "The command line works without the viewport: `musacad --check <drawing>` and "
         "`musacad --plot <drawing> <out.pdf>`.\n\nMusa CAD will close now.");
     return m;
+}
+
+std::unique_ptr<ViewportWindow::RenderSession> ViewportWindow::create_render_session() {
+    auto state = std::make_unique<RenderSession>();
+    state->cleanup_surface = cleanup_surface_.get();
+    auto& context = state->context;
+    context.setFormat(format());
+    if (!context.create() || !context.makeCurrent(this)) {
+        std::fprintf(stderr, "[musacad_ui] could not create/make-current GL context for viewport; viewport disabled\n");
+        Q_EMIT viewportUnavailable(gl_requirement_message(0, 0, QStringLiteral("no OpenGL context")));
+        return nullptr;
+    }
+    // Reject contexts below the shared 4.1 Core baseline before loading GL functions.
+    // MUSACAD_FORCE_GL_PROMPT=1 walks this path on a capable system (the self-test).
+    {
+        const QSurfaceFormat got = context.format();
+        const bool forced = std::getenv("MUSACAD_FORCE_GL_PROMPT") != nullptr;
+        const int major = forced ? 3 : got.majorVersion();
+        const int minor = forced ? 3 : got.minorVersion();
+        if (major < 4 || (major == 4 && minor < 1) || context.isOpenGLES() ||
+            got.profile() != QSurfaceFormat::CoreProfile) {
+            QString renderer;
+            if (QOpenGLFunctions* f0 = context.functions(); f0 != nullptr) {
+                const GLubyte* r = f0->glGetString(GL_RENDERER);
+                renderer = r != nullptr ? QString::fromUtf8(reinterpret_cast<const char*>(r)) : QString();
+            }
+            std::fprintf(stderr, "[musacad_ui] OpenGL %d.%d found, 4.1 Core required; viewport disabled\n",
+                         major, minor);
+            context.doneCurrent();
+            Q_EMIT viewportUnavailable(gl_requirement_message(major, minor, renderer));
+            return nullptr;
+        }
+    }
+
+    auto& device = state->device;
+    device = render::create_gl_device();
+    auto& target = state->target;
+    target = render::create_gl_default_target(fb_width_.load(), fb_height_.load());
+    if (!device || !target) {
+        std::fprintf(stderr, "[musacad_ui] GL device creation failed; viewport disabled\n");
+        context.doneCurrent();
+        Q_EMIT viewportUnavailable(gl_requirement_message(context.format().majorVersion(),
+            context.format().minorVersion(), QStringLiteral("OpenGL functions unavailable")));
+        return nullptr;
+    }
+    state->renderer = std::make_unique<render::ViewportRenderer>(*device);
+    auto& renderer = *state->renderer;
+    renderer.set_image_decoder(&image_decoder_); // textures decode on this thread, on a miss
+
+    // Say once what is actually drawing: the answer to "is the GPU being used?".
+    if (QOpenGLFunctions* f = context.functions(); f != nullptr) {
+        const GLubyte* r = f->glGetString(GL_RENDERER);
+        const GLubyte* v = f->glGetString(GL_VERSION);
+        std::fprintf(stderr, "[musacad_ui] GL renderer: %s | %s\n",
+                     r != nullptr ? reinterpret_cast<const char*>(r) : "?",
+                     v != nullptr ? reinterpret_cast<const char*>(v) : "?");
+        core::crash::set_graphics(std::string(r != nullptr ? reinterpret_cast<const char*>(r) : "?") + " | " +
+                                  (v != nullptr ? reinterpret_cast<const char*>(v) : "?"));
+    }
+
+    state->pacing_enabled = !render_on_gui_ && std::getenv("MUSACAD_NO_PACING") == nullptr;
+    return state;
+}
+
+bool ViewportWindow::render_frame(RenderSession& state) {
+    auto& context = state.context;
+    auto& target = state.target;
+    auto& stats = state.stats;
+    auto& smoke = state.smoke;
+    auto& smoke_frames = state.smoke_frames;
+    auto& last = state.last;
+    auto& last_world_per_px = state.last_world_per_px;
+    auto& pacing_enabled = state.pacing_enabled;
+    auto& timing = state.timing;
+    auto& period_ms = state.period_ms;
+    auto& render_max_ms = state.render_max_ms;
+    auto& slept_ms = state.slept_ms;
+    auto& touch_ms = state.touch_ms;
+    auto& paced = state.paced;
+    auto& refresh_anchor = state.refresh_anchor;
+    auto& last_stamp = state.last_stamp;
+    auto& lat_sum = state.lat_sum;
+    auto& lat_max = state.lat_max;
+    auto& lat_n = state.lat_n;
+    auto& renderer = *state.renderer;
+    using clock = std::chrono::steady_clock;
+    const auto to_ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    // Other UI windows may have made a different context current between timer ticks.
+    // Cocoa's view association and drawable updates must happen on this thread.
+    if (render_on_gui_ && !context.makeCurrent(this)) {
+        return true; // a recreated native surface may not be ready until the next tick
+    }
+    QOpenGLFunctions* const gf = context.functions();
+    if (pacing_enabled && paced) {
+        // Safety margin before the refresh: the recent worst render time with
+        // headroom, never under 2 ms (sleep_until jitter) nor over half a period. A
+        // missed refresh costs a whole period of latency, so the margin errs wide.
+        const double budget = std::clamp(render_max_ms * 1.5 + 1.0, 2.0, period_ms * 0.5);
+        const auto wake = refresh_anchor +
+                          std::chrono::duration_cast<clock::duration>(
+                              std::chrono::duration<double, std::milli>(period_ms - budget));
+        const auto t0 = clock::now();
+        if (wake > t0) {
+            std::this_thread::sleep_until(wake);
+        }
+        slept_ms = to_ms(clock::now() - t0);
+    } else {
+        slept_ms = 0.0;
+    }
+    const auto t_sample = clock::now();
+    // A frame capture records the frame rendered AFTER the request (a long iteration
+    // under software GL can otherwise hand back a frame built before it).
+    const bool capturing = capture_requested_.exchange(false, std::memory_order_acq_rel);
+    const std::int64_t stamp = cursor_stamp_ns_.load(std::memory_order_relaxed);
+    const int w = fb_width_.load(std::memory_order_relaxed);
+    const int h = fb_height_.load(std::memory_order_relaxed);
+    target->resize(w, h);
+
+    render::Camera2D cam;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        double ax = 0.0;
+        double atop = 0.0;
+        double aw = w;
+        double ah = h;
+        active_tile_rect(w, h, ax, atop, aw, ah);
+        camera_.set_viewport(static_cast<int>(aw), static_cast<int>(ah));
+        if (!camera_initialized_ && has_initial_view_) {
+            camera_.frame_bounds(init_min_, init_max_, 0.1);
+            camera_initialized_ = true;
+        }
+        cam = camera_;
+    }
+
+    engine_.consume_snapshot();
+    const core::RenderSnapshot& snap = engine_.snapshot();
+    // Per-document camera: each tab remembers its own zoom/pan. When the active
+    // document changes (the snapshot now reports a new id), save the outgoing tab's
+    // view and restore the incoming tab's -- or frame a never-seen document's extents.
+    if (snap.active_document_id != 0 && snap.active_document_id != cam_doc_id_) {
+        std::scoped_lock lock(camera_mutex_);
+        if (cam_doc_id_ != 0) {
+            doc_cameras_[cam_doc_id_] = camera_; // remember the outgoing tab's view
+        }
+        const auto it = doc_cameras_.find(snap.active_document_id);
+        if (it != doc_cameras_.end()) {
+            camera_ = it->second; // restore the tab's exact view
+            camera_.set_viewport(w, h);
+        } else {
+            camera_ = render::Camera2D{}; // first time: default, then frame content below
+            camera_.set_viewport(w, h);
+            camera_.frame_bounds(init_min_, init_max_, 0.1);
+            zoom_extents_requested_.store(true, std::memory_order_relaxed);
+        }
+        cam = camera_;
+        cam_doc_id_ = snap.active_document_id;
+    }
+    apply_tiles_from_snapshot(snap, w, h); // VPORTS: follow the store's configuration
+    if (zoom_extents_requested_.exchange(false, std::memory_order_relaxed) && snap.has_bounds) {
+        std::scoped_lock lock(camera_mutex_);
+        camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
+        cam = camera_;
+    }
+    if (view_requested_.exchange(false, std::memory_order_relaxed)) {
+        std::scoped_lock lock(camera_mutex_);
+        camera_.set_center(pending_view_center_);
+        if (pending_view_scale_ > 0.0) {
+            camera_.set_scale(pending_view_scale_);
+        }
+        cam = camera_;
+    }
+    // Zoom-adaptive tessellation (Part A): tell the geometry thread the view
+    // scale ONLY when it actually changes (zoom/resize, never pan), so curves
+    // re-tessellate to the current zoom. The engine buckets it, so tiny changes
+    // are no-ops there too.
+    const double wpp = cam.scale() > 0.0 ? 1.0 / cam.scale() : 1.0;
+    if (std::abs(wpp - last_world_per_px) > last_world_per_px * 1e-3) {
+        last_world_per_px = wpp;
+        engine_.submit(core::SetViewScaleCommand{wpp});
+    }
+    // Share the latest snap point back to the GUI thread for click-time picks.
+    snap_has_.store(snap.has_snap, std::memory_order_relaxed);
+    snap_type_.store(static_cast<int>(snap.snap_type), std::memory_order_relaxed);
+    if (snap.has_snap) {
+        snap_x_.store(snap.snap_point.x, std::memory_order_relaxed);
+        snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
+    }
+    selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+    {
+        std::uint32_t kinds = 0;
+        for (const core::EntityHandle h : snap.selection) {
+            kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
+        }
+        selection_kinds_.store(kinds, std::memory_order_relaxed);
+        if ((kinds & (1u << static_cast<unsigned>(core::EntityKind::Dimension))) != 0 || !selected_dims_.empty()) {
+            std::scoped_lock dims_lock(layers_mutex_);
+            selected_dims_ = snap.selected_dims;
+        }
+        selection_w_.store(snap.selection_size.x, std::memory_order_relaxed);
+        block_editor_.store(snap.block_editor, std::memory_order_relaxed);
+        selection_h_.store(snap.selection_size.y, std::memory_order_relaxed);
+    }
+    grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
+                              std::memory_order_relaxed);
+    double band_max_x = -std::numeric_limits<double>::infinity();
+    for (const core::Vec2& v : snap.grip_preview_segments) {
+        band_max_x = std::max(band_max_x, v.x);
+    }
+    grip_preview_max_x_.store(band_max_x, std::memory_order_relaxed);
+    line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
+                             std::memory_order_relaxed);
+    hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
+                        std::memory_order_relaxed);
+    hovered_closed_.store(snap.has_hover && snap.hover_closed, std::memory_order_relaxed);
+    hovered_block_.store(snap.has_hover ? snap.hover_block : -1, std::memory_order_relaxed);
+    dirty_.store(snap.dirty, std::memory_order_relaxed);
+    document_version_.store(snap.document_version, std::memory_order_relaxed);
+    current_layer_.store(snap.current_layer, std::memory_order_relaxed);
+    {
+        // Multi-document tab list, for the GUI thread to render the tab strip + title.
+        std::scoped_lock lock(docs_mutex_);
+        docs_cache_ = snap.documents;
+        active_doc_id_cache_ = snap.active_document_id;
+    }
+    {
+        // Cache resolved object-dimension def points + Standard style for the
+        // GUI-thread placement preview (read in rebuild_overlay).
+        std::scoped_lock lock(pending_dim_mutex_);
+        pending_dim_valid_ = snap.has_pending_dim;
+        pdim_a_ = snap.pending_dim_a;
+        pdim_b_ = snap.pending_dim_b;
+        pdim_line_pt_ = snap.pending_dim_line_pt;
+        pdim_type_ = snap.pending_dim_type;
+        pdim_aux_ = snap.pending_dim_aux;
+        // The placement preview draws in the style the dimension will have: the current one.
+        pdim_style_ = snap.current_dimstyle < snap.dimstyles.size() ? snap.dimstyles[snap.current_dimstyle]
+                      : snap.dimstyles.empty()                       ? core::DimStyle{}
+                                                                     : snap.dimstyles[0];
+    }
+    {
+        // Cache grips for GUI-thread hit-testing (grab on press) -- none over GRIPOBJLIMIT.
+        std::scoped_lock lock(grips_mutex_);
+        const int limit = gripobjlimit_.load();
+        if (limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit)) {
+            grips_cache_.clear();
+        } else {
+            grips_cache_ = snap.grips;
+        }
+        text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
+        attrib_targets_ = snap.attrib_edit_targets; // EATTEDIT / double-click
+        selection_summary_ = snap.selection_summary; // PR palette
+        has_sel_bounds_ = !snap.selected_line_vertices.empty();
+        if (has_sel_bounds_) {
+            sel_bounds_min_ = sel_bounds_max_ = snap.selected_line_vertices.front();
+            for (const core::Vec2& p : snap.selected_line_vertices) {
+                sel_bounds_min_ = {std::min(sel_bounds_min_.x, p.x), std::min(sel_bounds_min_.y, p.y)};
+                sel_bounds_max_ = {std::max(sel_bounds_max_.x, p.x), std::max(sel_bounds_max_.y, p.y)};
+            }
+        }
+        bounds_min_ = snap.bounds_min;
+        bounds_max_ = snap.bounds_max;
+        has_bounds_ = snap.has_bounds;
+    }
+    {
+        std::scoped_lock lock(layers_mutex_);
+        layers_ = snap.layers;
+        current_props_ = snap.current_props;
+        named_views_ = snap.named_views;
+        custom_patterns_ = snap.custom_patterns;
+        layer_filters_ = snap.layer_filters;
+        layer_state_names_ = snap.layer_state_names;
+        units_ = snap.units;
+        pdmode_ = snap.pdmode;
+        pdsize_ = snap.pdsize;
+        limits_min_ = snap.limits_min;
+        limits_max_ = snap.limits_max;
+        limits_on_ = snap.limits_on;
+        insbase_ = snap.insbase;
+        data_links_ = snap.data_links;
+        layer_used_ = snap.layer_used;
+        text_styles_ = snap.text_styles;
+        current_text_style_ = snap.current_text_style;
+        lwdisplay_ = snap.lineweight_display ? 1 : 0;
+        dim_styles_ = snap.dimstyles;
+        current_dim_style_ = snap.current_dimstyle;
+        table_styles_ = snap.table_styles;
+        current_table_style_ = snap.current_table_style;
+        mleader_styles_ = snap.mleader_styles;
+        mline_settings_ = snap.mline;
+        current_mleader_style_ = snap.current_mleader_style;
+        block_names_ = snap.block_names;
+        block_attdefs_ = snap.block_attdefs;
+        block_previews_ = snap.block_previews;
+        style_previews_ = StylePreviews{snap.dimstyle_previews, snap.mleaderstyle_previews, snap.tablestyle_previews};
+        linetypes_ = snap.linetypes;
+        layouts_ = snap.layouts;
+        purge_ = snap.purge;
+        ltscale_ = snap.ltscale;
+        celtscale_ = snap.current_celtscale;
+        psltscale_ = snap.psltscale;
+        msltscale_ = snap.msltscale;
+        fillmode_ = snap.fillmode;
+        pickstyle_ = snap.pickstyle;
+        object_isolation_ = snap.object_isolation;
+        drawing_props_ = snap.drawing_props;
+        times_ = snap.times;
+        if (snap.pick_candidates_version != pick_candidates_seen_) {
+            pick_candidates_seen_ = snap.pick_candidates_version;
+            pick_candidates_ = snap.pick_candidates;
+            if (pick_candidates_.size() >= 2) {
+                // The list is a GUI-thread affair; this is the render thread.
+                QMetaObject::invokeMethod(this, [this] { show_cycle_menu(); }, Qt::QueuedConnection);
+            }
+        }
+        active_space_ = snap.active_space;
+        embedded_images_ = static_cast<std::size_t>(
+            std::count_if(snap.image_defs.begin(), snap.image_defs.end(),
+                          [](const core::ImageDefView& d) { return d.bytes && !d.bytes->empty(); }));
+        mspace_ = snap.mspace;
+        viewport_rects_ = snap.viewport_rects;
+    }
+    // MSPACE hand-off: entering shows the viewport's model view at the same on-screen
+    // size (the sheet camera is kept); leaving restores the sheet camera.
+    if (snap.mspace.active && !mspace_seen_) {
+        std::scoped_lock cl(camera_mutex_);
+        paper_cam_center_ = camera_.center();
+        paper_cam_scale_ = camera_.scale();
+        camera_.set_center(snap.mspace.view_center);
+        camera_.set_scale(snap.mspace.paper_px_per_mm * snap.mspace.scale);
+    } else if (!snap.mspace.active && mspace_seen_ && paper_cam_scale_ > 0.0) {
+        std::scoped_lock cl(camera_mutex_);
+        camera_.set_center(paper_cam_center_);
+        camera_.set_scale(paper_cam_scale_);
+    }
+    mspace_seen_ = snap.mspace.active;
+
+    // Surface the engine's command-result message (honest feedback) once.
+    if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {
+        {
+            std::scoped_lock lock(status_mutex_);
+            status_ = snap.status;
+        }
+        status_version_.store(snap.status_version, std::memory_order_relaxed);
+    }
+
+    {
+        std::shared_ptr<const render::RenderOverlay> ov;
+        {
+            std::scoped_lock lock(overlay_mutex_);
+            ov = overlay_; // a reference, not a copy of the overlay's vertices
+        }
+        renderer.set_overlay(std::move(ov));
+    }
+
+    renderer.set_grid_visible(modes_ == nullptr || modes_->grid.load(std::memory_order_relaxed));
+    {
+        std::scoped_lock lock(grid_mutex_);
+        renderer.set_grid_settings(grid_settings_);
+    }
+    const bool presenting = presentation_.load(std::memory_order_relaxed);
+    renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed) &&
+                            (!presenting || presentation_cursor_.load(std::memory_order_relaxed)),
+                        static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
+                        static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
+    renderer.set_overlay_text(presenting || !perf_overlay_.load(std::memory_order_relaxed)
+                                  ? std::string{}
+                                  : overlay_text(stats.fps(), stats.average_frame_ms()));
+    // AutoCAD-accurate, HiDPI-correct lineweight. physicalDotsPerInch is a
+    // *logical* pixel density (Qt derives it from device-independent geometry);
+    // the framebuffer is in PHYSICAL pixels, so the renderer multiplies this by
+    // the device-pixel-ratio. Both are pushed every frame, so dragging the
+    // window between a normal monitor and a HiDPI laptop self-corrects.
+    if (const QScreen* scr = screen(); scr != nullptr) {
+        renderer.set_device_pixels_per_mm(
+            static_cast<float>(scr->physicalDotsPerInch() / 25.4));
+    }
+    renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
+    {
+        const auto rgb_of = [](int aci) -> std::uint32_t {
+            if (aci <= 0) {
+                return 0; // the theme's colour
+            }
+            const core::Rgb c = core::io::dxf_aci_to_rgb(aci);
+            const std::uint32_t v = (std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b;
+            return v == 0 ? 1 : v; // black stays black, not "the theme's"
+        };
+        // GRIPOBJLIMIT: more objects selected than that, no grips (0: no limit).
+        const int limit = gripobjlimit_.load();
+        const bool over = limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit);
+        renderer.set_grip_style(grips_on_.load() == 0 || over ? 0.0 : static_cast<double>(gripsize_.load()),
+                                rgb_of(gripcolor_.load()), rgb_of(griphot_.load()), rgb_of(griphover_.load()));
+        renderer.set_transparency_display(transparencydisplay_.load() != 0);
+        renderer.set_ucs_icon(ucsicon_.load(), snap.active_space != 0);
+    }
+    // VPORTS: in model space with more than one tile, every tile draws through its own
+    // camera (a tile never framed yet is fitted to the drawing first).
+    std::vector<render::ViewportRenderer::TileView> tile_views;
+    if (snap.active_space == 0) {
+        std::scoped_lock lock(camera_mutex_);
+        if (tiles_.size() > 1) {
+            for (std::size_t i = 0; i < tiles_.size(); ++i) {
+                Tile& t = tiles_[i];
+                render::ViewportRenderer::TileView tv;
+                tv.x = static_cast<int>(std::floor(t.x0 * w));
+                tv.y = static_cast<int>(std::floor(t.y0 * h));
+                tv.w = std::max(1, static_cast<int>(std::floor(t.x1 * w)) - tv.x);
+                tv.h = std::max(1, static_cast<int>(std::floor(t.y1 * h)) - tv.y);
+                tv.active = i == active_tile_;
+                render::Camera2D& c = tv.active ? camera_ : t.camera;
+                c.set_viewport(tv.w, tv.h);
+                if (!t.framed && snap.has_bounds) {
+                    c.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
+                    t.framed = true;
+                }
+                tv.camera = c;
+                tile_views.push_back(tv);
+            }
+            cam = camera_;
+        }
+    }
+    if (tile_views.empty()) {
+        std::scoped_lock lock(camera_mutex_);
+        if (camera_.viewport_width() != w || camera_.viewport_height() != h) {
+            camera_.set_viewport(w, h); // a layout, or the frame the split was undone
+            cam = camera_;
+        }
+    }
+    if (tile_views.empty()) {
+        renderer.render(*target, snap, cam);
+    } else {
+        renderer.render_tiles(*target, snap, tile_views);
+    }
+    if (capturing) {
+        std::string path;
+        {
+            std::scoped_lock lock(capture_mutex_);
+            path = capture_path_;
+        }
+        const int cw = target->width();
+        const int ch = target->height();
+        bool ok = false;
+        if (gf != nullptr && cw > 0 && ch > 0) {
+            std::vector<unsigned char> px(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch) * 4);
+            gf->glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            QImage img(cw, ch, QImage::Format_RGBA8888);
+            const std::size_t row = static_cast<std::size_t>(cw) * 4;
+            for (int y = 0; y < ch; ++y) { // GL rows run bottom-up
+                std::memcpy(img.scanLine(y), px.data() + static_cast<std::size_t>(ch - 1 - y) * row, row);
+            }
+            ok = img.save(QString::fromStdString(path), "PNG");
+        }
+        std::printf("[viewport_capture] %s -> %s\n", path.c_str(), ok ? "saved" : "FAILED");
+        std::fflush(stdout);
+    }
+    const auto t_before_swap = clock::now();
+    context.swapBuffers(this);
+    const auto t_after_swap = clock::now();
+    // Where the display throttle actually sits differs by driver. NVIDIA blocks in
+    // swapBuffers; Mesa returns at once and blocks on the NEXT frame's first
+    // back-buffer write instead -- which, left alone, lands AFTER the cursor was
+    // sampled and silently adds a whole refresh to every frame's input age. So the
+    // back buffer is acquired here, deliberately, with a one-pixel clear: whichever
+    // call blocks, the loop is now pinned to the refresh before it samples input.
+    if (gf != nullptr) {
+        gf->glEnable(GL_SCISSOR_TEST);
+        gf->glScissor(0, 0, 1, 1);
+        gf->glClear(GL_COLOR_BUFFER_BIT);
+        gf->glDisable(GL_SCISSOR_TEST);
+    }
+    const auto now = clock::now();
+
+    // Pacing statistics from this frame.
+    const double render_ms = to_ms(t_before_swap - t_sample);
+    const double swap_ms = to_ms(t_after_swap - t_before_swap);
+    touch_ms = to_ms(now - t_after_swap);
+    const double interval_ms = to_ms(now - refresh_anchor);
+    refresh_anchor = now;
+    render_max_ms = std::max(render_ms, render_max_ms * 0.9);
+    // A paced frame whose acquire did not wait at all arrived AFTER the refresh: it
+    // slipped a period. Widen the margin so the next frames make it comfortably.
+    if (paced && slept_ms > 0.0 && touch_ms < 0.2) {
+        render_max_ms += 1.0;
+    }
+    period_ms = period_ms <= 0.0 ? interval_ms : period_ms * 0.9 + interval_ms * 0.1;
+    // vsync is pacing us when the frame's idle time (blocking swap, the throttled
+    // acquire, and our own sleep) fills most of a plausible refresh interval.
+    paced = period_ms >= 6.0 && period_ms <= 40.0 &&
+            (swap_ms + touch_ms + slept_ms) >= interval_ms * 0.5;
+    if (timing && stamp != 0 && stamp != last_stamp) {
+        last_stamp = stamp;
+        const double lat = to_ms(now.time_since_epoch()) - static_cast<double>(stamp) / 1e6;
+        lat_sum += lat;
+        lat_max = std::max(lat_max, lat);
+        if (++lat_n == 20) {
+            std::fprintf(stderr,
+                         "[timing] input->present %.1f ms avg, %.1f max | refresh %.1f ms, "
+                         "render %.2f, swap %.1f, acquire %.1f, slept %.1f, paced=%d\n",
+                         lat_sum / lat_n, lat_max, period_ms, render_ms, swap_ms, touch_ms,
+                         slept_ms, paced ? 1 : 0);
+            lat_sum = lat_max = 0.0;
+            lat_n = 0;
+        }
+    }
+
+    const double dt = std::chrono::duration<double>(now - last).count();
+    last = now;
+    stats.add_frame(dt);
+    fps_.store(stats.fps(), std::memory_order_relaxed);
+    frames_rendered_.fetch_add(1, std::memory_order_relaxed);
+
+    if (smoke && ++smoke_frames >= 30) {
+        return false; // headless/CI: render a few frames then stop
+    }
+    return true;
 }
 
 void ViewportWindow::render_loop(core::threading::stop_token token) {
@@ -1526,96 +2121,11 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
         }
     } running{this};
 
-    // The render thread exclusively owns the GL context.
-    QOpenGLContext context;
-    context.setFormat(format());
-    if (!context.create() || !context.makeCurrent(this)) {
-        std::fprintf(stderr, "[musacad_ui] could not create/make-current GL context on render "
-                             "thread; viewport disabled\n");
-        Q_EMIT viewportUnavailable(gl_requirement_message(0, 0, QStringLiteral("no OpenGL context")));
-        return;
-    }
-    // Qt hands back a lower context than the 4.5 Core the format asks for when that is all
-    // the driver has (macOS: 4.1). Say so and stop, rather than fail on the first DSA call.
-    // MUSACAD_FORCE_GL_PROMPT=1 walks this path on a capable system (the self-test).
-    {
-        const QSurfaceFormat got = context.format();
-        const bool forced = std::getenv("MUSACAD_FORCE_GL_PROMPT") != nullptr;
-        const int major = forced ? 4 : got.majorVersion();
-        const int minor = forced ? 1 : got.minorVersion();
-        if (major < 4 || (major == 4 && minor < 5)) {
-            QString renderer;
-            if (QOpenGLFunctions* f0 = context.functions(); f0 != nullptr) {
-                const GLubyte* r = f0->glGetString(GL_RENDERER);
-                renderer = r != nullptr ? QString::fromUtf8(reinterpret_cast<const char*>(r)) : QString();
-            }
-            std::fprintf(stderr, "[musacad_ui] OpenGL %d.%d found, 4.5 Core required; viewport disabled\n",
-                         major, minor);
-            context.doneCurrent();
-            Q_EMIT viewportUnavailable(gl_requirement_message(major, minor, renderer));
-            return;
-        }
-    }
-
-    auto device = render::create_gl_device();
-    auto target = render::create_gl_default_target(fb_width_.load(), fb_height_.load());
-    if (!device || !target) {
-        std::fprintf(stderr, "[musacad_ui] GL device creation failed; viewport disabled\n");
-        context.doneCurrent();
-        return;
-    }
-    render::ViewportRenderer renderer(*device);
-    renderer.set_image_decoder(&image_decoder_); // textures decode on this thread, on a miss
-    render::FrameStats stats;
-
-    // Say once what is actually drawing: the answer to "is the GPU being used?".
-    if (QOpenGLFunctions* f = context.functions(); f != nullptr) {
-        const GLubyte* r = f->glGetString(GL_RENDERER);
-        const GLubyte* v = f->glGetString(GL_VERSION);
-        std::fprintf(stderr, "[musacad_ui] GL renderer: %s | %s\n",
-                     r != nullptr ? reinterpret_cast<const char*>(r) : "?",
-                     v != nullptr ? reinterpret_cast<const char*>(v) : "?");
-        core::crash::set_graphics(std::string(r != nullptr ? reinterpret_cast<const char*>(r) : "?") + " | " +
-                                  (v != nullptr ? reinterpret_cast<const char*>(v) : "?"));
-    }
-
-    const bool smoke = std::getenv("MUSACAD_SMOKE") != nullptr;
-    int smoke_frames = 0;
-    auto last = std::chrono::steady_clock::now();
-    double last_world_per_px = 0.0; // last view scale reported to the geometry thread
-
-    // Frame pacing: late latching. With vsync, swapBuffers blocks until the display's
-    // refresh. A frame rendered the moment the previous swap returns therefore carries
-    // input that is a whole refresh old by the time it is scanned out -- the "few
-    // milliseconds behind the pointer" feel. Rendering takes about a millisecond, so
-    // instead this loop sleeps until just before the next refresh, THEN samples the
-    // cursor, overlay and snapshot and renders. The wait is derived from the measured
-    // refresh interval and a decaying maximum of the measured render time, and is
-    // only applied while vsync is demonstrably pacing the loop (the swap or the sleep
-    // takes most of each interval), so on an uncapped or offscreen context nothing
-    // is delayed. MUSACAD_NO_PACING=1 disables it for A/B measurement.
-    using clock = std::chrono::steady_clock;
-    const auto to_ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
-    const bool pacing_enabled = std::getenv("MUSACAD_NO_PACING") == nullptr;
-    const bool timing = std::getenv("MUSACAD_TIMING") != nullptr;
-    QOpenGLFunctions* const gf = context.functions();
-    double period_ms = 0.0;     // EMA of refresh-anchor intervals (the refresh period)
-    double render_max_ms = 0.0; // decaying max of sample-to-swap time
-    double slept_ms = 0.0;
-    double touch_ms = 0.0;
-    bool paced = false;
-    auto refresh_anchor = clock::now(); // the moment the display throttle last released
-    // Latency probe (MUSACAD_TIMING): mouse event -> swap returned for the frame that
-    // rendered that cursor position.
-    std::int64_t last_stamp = 0;
-    double lat_sum = 0.0;
-    double lat_max = 0.0;
-    int lat_n = 0;
-
-    bool current = true; // the context bound to the window's surface
+    auto state = create_render_session();
+    if (!state) return;
+    auto& context = state->context;
+    bool current = true;
     while (!token.stop_requested()) {
-        // The window hidden: let go of its surface, which the platform may now destroy, and
-        // wait to be shown again (#97). The surface then may be a new one: bind it afresh.
         {
             std::unique_lock lock(park_mutex_);
             if (park_requested_) {
@@ -1627,441 +2137,19 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
                 parked_ = false;
             }
         }
-        if (token.stop_requested()) {
-            break;
-        }
+        if (token.stop_requested()) break;
         if (!current) {
             if (!context.makeCurrent(this)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(16)); // not ready yet
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
                 continue;
             }
             current = true;
-            paced = false; // the refresh is measured again
-            refresh_anchor = clock::now();
+            state->paced = false;
+            state->refresh_anchor = std::chrono::steady_clock::now();
         }
-        if (pacing_enabled && paced) {
-            // Safety margin before the refresh: the recent worst render time with
-            // headroom, never under 2 ms (sleep_until jitter) nor over half a period. A
-            // missed refresh costs a whole period of latency, so the margin errs wide.
-            const double budget = std::clamp(render_max_ms * 1.5 + 1.0, 2.0, period_ms * 0.5);
-            const auto wake = refresh_anchor +
-                              std::chrono::duration_cast<clock::duration>(
-                                  std::chrono::duration<double, std::milli>(period_ms - budget));
-            const auto t0 = clock::now();
-            if (wake > t0) {
-                std::this_thread::sleep_until(wake);
-            }
-            slept_ms = to_ms(clock::now() - t0);
-        } else {
-            slept_ms = 0.0;
-        }
-        const auto t_sample = clock::now();
-        // A frame capture records the frame rendered AFTER the request (a long iteration
-        // under software GL can otherwise hand back a frame built before it).
-        const bool capturing = capture_requested_.exchange(false, std::memory_order_acq_rel);
-        const std::int64_t stamp = cursor_stamp_ns_.load(std::memory_order_relaxed);
-        const int w = fb_width_.load(std::memory_order_relaxed);
-        const int h = fb_height_.load(std::memory_order_relaxed);
-        target->resize(w, h);
-
-        render::Camera2D cam;
-        {
-            std::scoped_lock lock(camera_mutex_);
-            double ax = 0.0;
-            double atop = 0.0;
-            double aw = w;
-            double ah = h;
-            active_tile_rect(w, h, ax, atop, aw, ah);
-            camera_.set_viewport(static_cast<int>(aw), static_cast<int>(ah));
-            if (!camera_initialized_ && has_initial_view_) {
-                camera_.frame_bounds(init_min_, init_max_, 0.1);
-                camera_initialized_ = true;
-            }
-            cam = camera_;
-        }
-
-        engine_.consume_snapshot();
-        const core::RenderSnapshot& snap = engine_.snapshot();
-        // Per-document camera: each tab remembers its own zoom/pan. When the active
-        // document changes (the snapshot now reports a new id), save the outgoing tab's
-        // view and restore the incoming tab's -- or frame a never-seen document's extents.
-        if (snap.active_document_id != 0 && snap.active_document_id != cam_doc_id_) {
-            std::scoped_lock lock(camera_mutex_);
-            if (cam_doc_id_ != 0) {
-                doc_cameras_[cam_doc_id_] = camera_; // remember the outgoing tab's view
-            }
-            const auto it = doc_cameras_.find(snap.active_document_id);
-            if (it != doc_cameras_.end()) {
-                camera_ = it->second; // restore the tab's exact view
-                camera_.set_viewport(w, h);
-            } else {
-                camera_ = render::Camera2D{}; // first time: default, then frame content below
-                camera_.set_viewport(w, h);
-                camera_.frame_bounds(init_min_, init_max_, 0.1);
-                zoom_extents_requested_.store(true, std::memory_order_relaxed);
-            }
-            cam = camera_;
-            cam_doc_id_ = snap.active_document_id;
-        }
-        apply_tiles_from_snapshot(snap, w, h); // VPORTS: follow the store's configuration
-        if (zoom_extents_requested_.exchange(false, std::memory_order_relaxed) && snap.has_bounds) {
-            std::scoped_lock lock(camera_mutex_);
-            camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
-            cam = camera_;
-        }
-        if (view_requested_.exchange(false, std::memory_order_relaxed)) {
-            std::scoped_lock lock(camera_mutex_);
-            camera_.set_center(pending_view_center_);
-            if (pending_view_scale_ > 0.0) {
-                camera_.set_scale(pending_view_scale_);
-            }
-            cam = camera_;
-        }
-        // Zoom-adaptive tessellation (Part A): tell the geometry thread the view
-        // scale ONLY when it actually changes (zoom/resize, never pan), so curves
-        // re-tessellate to the current zoom. The engine buckets it, so tiny changes
-        // are no-ops there too.
-        const double wpp = cam.scale() > 0.0 ? 1.0 / cam.scale() : 1.0;
-        if (std::abs(wpp - last_world_per_px) > last_world_per_px * 1e-3) {
-            last_world_per_px = wpp;
-            engine_.submit(core::SetViewScaleCommand{wpp});
-        }
-        // Share the latest snap point back to the GUI thread for click-time picks.
-        snap_has_.store(snap.has_snap, std::memory_order_relaxed);
-        snap_type_.store(static_cast<int>(snap.snap_type), std::memory_order_relaxed);
-        if (snap.has_snap) {
-            snap_x_.store(snap.snap_point.x, std::memory_order_relaxed);
-            snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
-        }
-        selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
-        {
-            std::uint32_t kinds = 0;
-            for (const core::EntityHandle h : snap.selection) {
-                kinds |= 1u << (static_cast<unsigned>(h.kind) & 31u);
-            }
-            selection_kinds_.store(kinds, std::memory_order_relaxed);
-            if ((kinds & (1u << static_cast<unsigned>(core::EntityKind::Dimension))) != 0 || !selected_dims_.empty()) {
-                std::scoped_lock dims_lock(layers_mutex_);
-                selected_dims_ = snap.selected_dims;
-            }
-            selection_w_.store(snap.selection_size.x, std::memory_order_relaxed);
-            block_editor_.store(snap.block_editor, std::memory_order_relaxed);
-            selection_h_.store(snap.selection_size.y, std::memory_order_relaxed);
-        }
-        grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
-                                  std::memory_order_relaxed);
-        double band_max_x = -std::numeric_limits<double>::infinity();
-        for (const core::Vec2& v : snap.grip_preview_segments) {
-            band_max_x = std::max(band_max_x, v.x);
-        }
-        grip_preview_max_x_.store(band_max_x, std::memory_order_relaxed);
-        line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
-                                 std::memory_order_relaxed);
-        hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
-                            std::memory_order_relaxed);
-        hovered_closed_.store(snap.has_hover && snap.hover_closed, std::memory_order_relaxed);
-        hovered_block_.store(snap.has_hover ? snap.hover_block : -1, std::memory_order_relaxed);
-        dirty_.store(snap.dirty, std::memory_order_relaxed);
-        document_version_.store(snap.document_version, std::memory_order_relaxed);
-        current_layer_.store(snap.current_layer, std::memory_order_relaxed);
-        {
-            // Multi-document tab list, for the GUI thread to render the tab strip + title.
-            std::scoped_lock lock(docs_mutex_);
-            docs_cache_ = snap.documents;
-            active_doc_id_cache_ = snap.active_document_id;
-        }
-        {
-            // Cache resolved object-dimension def points + Standard style for the
-            // GUI-thread placement preview (read in rebuild_overlay).
-            std::scoped_lock lock(pending_dim_mutex_);
-            pending_dim_valid_ = snap.has_pending_dim;
-            pdim_a_ = snap.pending_dim_a;
-            pdim_b_ = snap.pending_dim_b;
-            pdim_line_pt_ = snap.pending_dim_line_pt;
-            pdim_type_ = snap.pending_dim_type;
-            pdim_aux_ = snap.pending_dim_aux;
-            // The placement preview draws in the style the dimension will have: the current one.
-            pdim_style_ = snap.current_dimstyle < snap.dimstyles.size() ? snap.dimstyles[snap.current_dimstyle]
-                          : snap.dimstyles.empty()                       ? core::DimStyle{}
-                                                                         : snap.dimstyles[0];
-        }
-        {
-            // Cache grips for GUI-thread hit-testing (grab on press) -- none over GRIPOBJLIMIT.
-            std::scoped_lock lock(grips_mutex_);
-            const int limit = gripobjlimit_.load();
-            if (limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit)) {
-                grips_cache_.clear();
-            } else {
-                grips_cache_ = snap.grips;
-            }
-            text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
-            attrib_targets_ = snap.attrib_edit_targets; // EATTEDIT / double-click
-            selection_summary_ = snap.selection_summary; // PR palette
-            has_sel_bounds_ = !snap.selected_line_vertices.empty();
-            if (has_sel_bounds_) {
-                sel_bounds_min_ = sel_bounds_max_ = snap.selected_line_vertices.front();
-                for (const core::Vec2& p : snap.selected_line_vertices) {
-                    sel_bounds_min_ = {std::min(sel_bounds_min_.x, p.x), std::min(sel_bounds_min_.y, p.y)};
-                    sel_bounds_max_ = {std::max(sel_bounds_max_.x, p.x), std::max(sel_bounds_max_.y, p.y)};
-                }
-            }
-            bounds_min_ = snap.bounds_min;
-            bounds_max_ = snap.bounds_max;
-            has_bounds_ = snap.has_bounds;
-        }
-        {
-            std::scoped_lock lock(layers_mutex_);
-            layers_ = snap.layers;
-            current_props_ = snap.current_props;
-            named_views_ = snap.named_views;
-            custom_patterns_ = snap.custom_patterns;
-            layer_filters_ = snap.layer_filters;
-            layer_state_names_ = snap.layer_state_names;
-            units_ = snap.units;
-            pdmode_ = snap.pdmode;
-            pdsize_ = snap.pdsize;
-            limits_min_ = snap.limits_min;
-            limits_max_ = snap.limits_max;
-            limits_on_ = snap.limits_on;
-            insbase_ = snap.insbase;
-            data_links_ = snap.data_links;
-            layer_used_ = snap.layer_used;
-            text_styles_ = snap.text_styles;
-            current_text_style_ = snap.current_text_style;
-            lwdisplay_ = snap.lineweight_display ? 1 : 0;
-            dim_styles_ = snap.dimstyles;
-            current_dim_style_ = snap.current_dimstyle;
-            table_styles_ = snap.table_styles;
-            current_table_style_ = snap.current_table_style;
-            mleader_styles_ = snap.mleader_styles;
-            mline_settings_ = snap.mline;
-            current_mleader_style_ = snap.current_mleader_style;
-            block_names_ = snap.block_names;
-            block_attdefs_ = snap.block_attdefs;
-            block_previews_ = snap.block_previews;
-            style_previews_ = StylePreviews{snap.dimstyle_previews, snap.mleaderstyle_previews, snap.tablestyle_previews};
-            linetypes_ = snap.linetypes;
-            layouts_ = snap.layouts;
-            purge_ = snap.purge;
-            ltscale_ = snap.ltscale;
-            celtscale_ = snap.current_celtscale;
-            psltscale_ = snap.psltscale;
-            msltscale_ = snap.msltscale;
-            fillmode_ = snap.fillmode;
-            pickstyle_ = snap.pickstyle;
-            object_isolation_ = snap.object_isolation;
-            drawing_props_ = snap.drawing_props;
-            times_ = snap.times;
-            if (snap.pick_candidates_version != pick_candidates_seen_) {
-                pick_candidates_seen_ = snap.pick_candidates_version;
-                pick_candidates_ = snap.pick_candidates;
-                if (pick_candidates_.size() >= 2) {
-                    // The list is a GUI-thread affair; this is the render thread.
-                    QMetaObject::invokeMethod(this, [this] { show_cycle_menu(); }, Qt::QueuedConnection);
-                }
-            }
-            active_space_ = snap.active_space;
-            embedded_images_ = static_cast<std::size_t>(
-                std::count_if(snap.image_defs.begin(), snap.image_defs.end(),
-                              [](const core::ImageDefView& d) { return d.bytes && !d.bytes->empty(); }));
-            mspace_ = snap.mspace;
-            viewport_rects_ = snap.viewport_rects;
-        }
-        // MSPACE hand-off: entering shows the viewport's model view at the same on-screen
-        // size (the sheet camera is kept); leaving restores the sheet camera.
-        if (snap.mspace.active && !mspace_seen_) {
-            std::scoped_lock cl(camera_mutex_);
-            paper_cam_center_ = camera_.center();
-            paper_cam_scale_ = camera_.scale();
-            camera_.set_center(snap.mspace.view_center);
-            camera_.set_scale(snap.mspace.paper_px_per_mm * snap.mspace.scale);
-        } else if (!snap.mspace.active && mspace_seen_ && paper_cam_scale_ > 0.0) {
-            std::scoped_lock cl(camera_mutex_);
-            camera_.set_center(paper_cam_center_);
-            camera_.set_scale(paper_cam_scale_);
-        }
-        mspace_seen_ = snap.mspace.active;
-
-        // Surface the engine's command-result message (honest feedback) once.
-        if (snap.status_version != status_version_.load(std::memory_order_relaxed)) {
-            {
-                std::scoped_lock lock(status_mutex_);
-                status_ = snap.status;
-            }
-            status_version_.store(snap.status_version, std::memory_order_relaxed);
-        }
-
-        {
-            std::shared_ptr<const render::RenderOverlay> ov;
-            {
-                std::scoped_lock lock(overlay_mutex_);
-                ov = overlay_; // a reference, not a copy of the overlay's vertices
-            }
-            renderer.set_overlay(std::move(ov));
-        }
-
-        renderer.set_grid_visible(modes_ == nullptr || modes_->grid.load(std::memory_order_relaxed));
-        {
-            std::scoped_lock lock(grid_mutex_);
-            renderer.set_grid_settings(grid_settings_);
-        }
-        const bool presenting = presentation_.load(std::memory_order_relaxed);
-        renderer.set_cursor(cursor_inside_.load(std::memory_order_relaxed) &&
-                                (!presenting || presentation_cursor_.load(std::memory_order_relaxed)),
-                            static_cast<float>(cursor_px_x_.load(std::memory_order_relaxed)),
-                            static_cast<float>(cursor_px_y_.load(std::memory_order_relaxed)));
-        renderer.set_overlay_text(presenting || !perf_overlay_.load(std::memory_order_relaxed)
-                                      ? std::string{}
-                                      : overlay_text(stats.fps(), stats.average_frame_ms()));
-        // AutoCAD-accurate, HiDPI-correct lineweight. physicalDotsPerInch is a
-        // *logical* pixel density (Qt derives it from device-independent geometry);
-        // the framebuffer is in PHYSICAL pixels, so the renderer multiplies this by
-        // the device-pixel-ratio. Both are pushed every frame, so dragging the
-        // window between a normal monitor and a HiDPI laptop self-corrects.
-        if (const QScreen* scr = screen(); scr != nullptr) {
-            renderer.set_device_pixels_per_mm(
-                static_cast<float>(scr->physicalDotsPerInch() / 25.4));
-        }
-        renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
-        {
-            const auto rgb_of = [](int aci) -> std::uint32_t {
-                if (aci <= 0) {
-                    return 0; // the theme's colour
-                }
-                const core::Rgb c = core::io::dxf_aci_to_rgb(aci);
-                const std::uint32_t v = (std::uint32_t{c.r} << 16) | (std::uint32_t{c.g} << 8) | c.b;
-                return v == 0 ? 1 : v; // black stays black, not "the theme's"
-            };
-            // GRIPOBJLIMIT: more objects selected than that, no grips (0: no limit).
-            const int limit = gripobjlimit_.load();
-            const bool over = limit > 0 && snap.selection.size() > static_cast<std::size_t>(limit);
-            renderer.set_grip_style(grips_on_.load() == 0 || over ? 0.0 : static_cast<double>(gripsize_.load()),
-                                    rgb_of(gripcolor_.load()), rgb_of(griphot_.load()), rgb_of(griphover_.load()));
-            renderer.set_transparency_display(transparencydisplay_.load() != 0);
-            renderer.set_ucs_icon(ucsicon_.load(), snap.active_space != 0);
-        }
-        // VPORTS: in model space with more than one tile, every tile draws through its own
-        // camera (a tile never framed yet is fitted to the drawing first).
-        std::vector<render::ViewportRenderer::TileView> tile_views;
-        if (snap.active_space == 0) {
-            std::scoped_lock lock(camera_mutex_);
-            if (tiles_.size() > 1) {
-                for (std::size_t i = 0; i < tiles_.size(); ++i) {
-                    Tile& t = tiles_[i];
-                    render::ViewportRenderer::TileView tv;
-                    tv.x = static_cast<int>(std::floor(t.x0 * w));
-                    tv.y = static_cast<int>(std::floor(t.y0 * h));
-                    tv.w = std::max(1, static_cast<int>(std::floor(t.x1 * w)) - tv.x);
-                    tv.h = std::max(1, static_cast<int>(std::floor(t.y1 * h)) - tv.y);
-                    tv.active = i == active_tile_;
-                    render::Camera2D& c = tv.active ? camera_ : t.camera;
-                    c.set_viewport(tv.w, tv.h);
-                    if (!t.framed && snap.has_bounds) {
-                        c.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
-                        t.framed = true;
-                    }
-                    tv.camera = c;
-                    tile_views.push_back(tv);
-                }
-                cam = camera_;
-            }
-        }
-        if (tile_views.empty()) {
-            std::scoped_lock lock(camera_mutex_);
-            if (camera_.viewport_width() != w || camera_.viewport_height() != h) {
-                camera_.set_viewport(w, h); // a layout, or the frame the split was undone
-                cam = camera_;
-            }
-        }
-        if (tile_views.empty()) {
-            renderer.render(*target, snap, cam);
-        } else {
-            renderer.render_tiles(*target, snap, tile_views);
-        }
-        if (capturing) {
-            std::string path;
-            {
-                std::scoped_lock lock(capture_mutex_);
-                path = capture_path_;
-            }
-            const int cw = target->width();
-            const int ch = target->height();
-            bool ok = false;
-            if (gf != nullptr && cw > 0 && ch > 0) {
-                std::vector<unsigned char> px(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch) * 4);
-                gf->glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-                QImage img(cw, ch, QImage::Format_RGBA8888);
-                const std::size_t row = static_cast<std::size_t>(cw) * 4;
-                for (int y = 0; y < ch; ++y) { // GL rows run bottom-up
-                    std::memcpy(img.scanLine(y), px.data() + static_cast<std::size_t>(ch - 1 - y) * row, row);
-                }
-                ok = img.save(QString::fromStdString(path), "PNG");
-            }
-            std::printf("[viewport_capture] %s -> %s\n", path.c_str(), ok ? "saved" : "FAILED");
-            std::fflush(stdout);
-        }
-        const auto t_before_swap = clock::now();
-        context.swapBuffers(this);
-        const auto t_after_swap = clock::now();
-        // Where the display throttle actually sits differs by driver. NVIDIA blocks in
-        // swapBuffers; Mesa returns at once and blocks on the NEXT frame's first
-        // back-buffer write instead -- which, left alone, lands AFTER the cursor was
-        // sampled and silently adds a whole refresh to every frame's input age. So the
-        // back buffer is acquired here, deliberately, with a one-pixel clear: whichever
-        // call blocks, the loop is now pinned to the refresh before it samples input.
-        if (gf != nullptr) {
-            gf->glEnable(GL_SCISSOR_TEST);
-            gf->glScissor(0, 0, 1, 1);
-            gf->glClear(GL_COLOR_BUFFER_BIT);
-            gf->glDisable(GL_SCISSOR_TEST);
-        }
-        const auto now = clock::now();
-
-        // Pacing statistics from this frame.
-        const double render_ms = to_ms(t_before_swap - t_sample);
-        const double swap_ms = to_ms(t_after_swap - t_before_swap);
-        touch_ms = to_ms(now - t_after_swap);
-        const double interval_ms = to_ms(now - refresh_anchor);
-        refresh_anchor = now;
-        render_max_ms = std::max(render_ms, render_max_ms * 0.9);
-        // A paced frame whose acquire did not wait at all arrived AFTER the refresh: it
-        // slipped a period. Widen the margin so the next frames make it comfortably.
-        if (paced && slept_ms > 0.0 && touch_ms < 0.2) {
-            render_max_ms += 1.0;
-        }
-        period_ms = period_ms <= 0.0 ? interval_ms : period_ms * 0.9 + interval_ms * 0.1;
-        // vsync is pacing us when the frame's idle time (blocking swap, the throttled
-        // acquire, and our own sleep) fills most of a plausible refresh interval.
-        paced = period_ms >= 6.0 && period_ms <= 40.0 &&
-                (swap_ms + touch_ms + slept_ms) >= interval_ms * 0.5;
-        if (timing && stamp != 0 && stamp != last_stamp) {
-            last_stamp = stamp;
-            const double lat = to_ms(now.time_since_epoch()) - static_cast<double>(stamp) / 1e6;
-            lat_sum += lat;
-            lat_max = std::max(lat_max, lat);
-            if (++lat_n == 20) {
-                std::fprintf(stderr,
-                             "[timing] input->present %.1f ms avg, %.1f max | refresh %.1f ms, "
-                             "render %.2f, swap %.1f, acquire %.1f, slept %.1f, paced=%d\n",
-                             lat_sum / lat_n, lat_max, period_ms, render_ms, swap_ms, touch_ms,
-                             slept_ms, paced ? 1 : 0);
-                lat_sum = lat_max = 0.0;
-                lat_n = 0;
-            }
-        }
-
-        const double dt = std::chrono::duration<double>(now - last).count();
-        last = now;
-        stats.add_frame(dt);
-        fps_.store(stats.fps(), std::memory_order_relaxed);
-        frames_rendered_.fetch_add(1, std::memory_order_relaxed);
-
-        if (smoke && ++smoke_frames >= 30) {
-            break; // headless/CI: render a few frames then stop
-        }
+        if (!render_frame(*state)) break;
     }
-
-    context.doneCurrent();
+    // RenderSession destroys GPU resources while its context is current.
 }
 
 void ViewportWindow::mousePressEvent(QMouseEvent* event) {

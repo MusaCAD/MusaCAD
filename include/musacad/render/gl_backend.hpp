@@ -13,7 +13,7 @@
 namespace musacad::render {
 
 /// Creates the OpenGL GpuDevice from the QOpenGLContext that is current on the
-/// calling thread. Returns nullptr if no suitable 4.5 context is current.
+/// calling thread. Returns nullptr if no suitable 4.1 Core context is current.
 [[nodiscard]] std::unique_ptr<GpuDevice> create_gl_device();
 
 /// Creates an onscreen render target (default framebuffer) of the given size.
