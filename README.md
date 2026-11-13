@@ -4,6 +4,10 @@
 
 # Musa CAD
 
+**[Documentation & tutorials](https://wiki.musacad.org/)** ·
+[Download](https://github.com/MusaCAD/MusaCAD/releases/latest) ·
+[Report an issue](https://github.com/MusaCAD/MusaCAD/issues)
+
 A high-performance, multi-threaded **2D CAD engine** in modern C++23 for Linux
 and Windows. Musa CAD mirrors AutoCAD's UI layout, command line, and classic
 shortcuts, but runs on a modernized, GPU-accelerated, data-oriented core
@@ -11,6 +15,24 @@ targeting a smooth 144 Hz+ viewport.
 
 > Status: actively developed. The 2D engine (Phases 1–5) is complete; 3D B-rep is
 > deferred behind a stable kernel interface. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## Documentation
+
+The **[Musa CAD wiki](https://wiki.musacad.org/)** is the user guide and reference
+for learning Musa CAD, looking up commands, and solving common problems.
+
+- **Start drawing:** [Installation and first steps](https://wiki.musacad.org/get-started/),
+  [your first drawing](https://wiki.musacad.org/get-started/first-drawing/),
+  or [coming from AutoCAD](https://wiki.musacad.org/get-started/coming-from-autocad/).
+- **Learn the tools:** [User manual](https://wiki.musacad.org/user-manual/),
+  [Dynamic Input](https://wiki.musacad.org/user-manual/dynamic-input/),
+  and [command reference](https://wiki.musacad.org/reference/).
+- **Find help:** [Keyboard shortcuts](https://wiki.musacad.org/reference/keyboard-shortcuts/)
+  and [troubleshooting](https://wiki.musacad.org/troubleshooting/).
+- **Automate or contribute:** [Scripting](https://wiki.musacad.org/scripting/)
+  and [developer documentation](https://wiki.musacad.org/developer/).
 
 ---
 
