@@ -68,7 +68,7 @@ include(EmbedShaders)
 # ---------------------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets PrintSupport Network)
 # Vulkan headers/loader are located so the GPU-backend seam can be validated WHEN PRESENT, but
-# the active backend is OpenGL 4.6 Core and Vulkan is NOT linked into the binary (see
+# the active backend is OpenGL 4.1 Core and Vulkan is NOT linked into the binary (see
 # docs/ARCHITECTURE.md). It is therefore optional -- nothing depends on the Vulkan:: targets, so
 # CI runners / platforms without a Vulkan SDK (e.g. the Windows installer build) build identically.
 find_package(Vulkan)

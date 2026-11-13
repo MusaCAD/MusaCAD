@@ -9,7 +9,7 @@ later phases.
 | Target            | Kind       | Responsibility |
 |-------------------|------------|----------------|
 | `musacad_core`    | static lib | Math, generational handles, SoA `GeometryStore`, `IGeometryKernel` + `NativeKernel2D`, threading primitives, snapshots, spatial index. Warnings are errors here. |
-| `musacad_render`  | static lib | Backend-agnostic RAII GPU abstraction (OpenGL 4.6 backend) + camera, grid, viewport renderer consuming snapshots. |
+| `musacad_render`  | static lib | Backend-agnostic RAII GPU abstraction (OpenGL 4.1 backend) + camera, grid, viewport renderer consuming snapshots. |
 | `musacad_command` | static lib | Table-driven alias parser, per-command state machines, coordinate parsing, REPL/history. |
 | `musacad_ui`      | static lib | Qt6 frame: ribbon, viewport host, command line, status bar, crosshairs. |
 | `musacad_app`     | executable | `main()`, thread orchestration. |
@@ -374,12 +374,12 @@ professional **on screen** without changing what reaches paper:
 
 ## Rendering (Phase 3)
 
-### GPU backend: OpenGL 4.6 Core (DSA), behind a backend-agnostic seam
+### GPU backend: OpenGL 4.1 Core, behind a backend-agnostic seam
 
 The renderer talks only to a small RAII abstraction — `GpuDevice`, `GpuBuffer`,
 `GpuPipeline`, `GpuCommandBuffer`, `GpuRenderTarget` (the public
 `include/musacad/render/gpu/` headers, free of any GL/Qt type). The only backend
-is OpenGL 4.6 Core using Direct State Access, implemented privately under
+uses OpenGL 4.1 Core bind-based APIs, implemented privately under
 `src/render/gl/`.
 
 Why OpenGL rather than Vulkan, here and now:
@@ -387,11 +387,13 @@ Why OpenGL rather than Vulkan, here and now:
   (Intel UHD 630 / Mesa, and NVIDIA via EGL) is available; Vulkan exposes no
   usable device here and the SPIR-V toolchain (`glslc`) is absent.
 * Qt supplies the window surface and the GL function loader
-  (`QOpenGLFunctions_4_5_Core`), so there is **no GLAD/GLEW/Vulkan-SDK
+  (`QOpenGLFunctions_4_1_Core`), so there is **no GLAD/GLEW/Vulkan-SDK
   dependency** — the project stays clone-and-build clean.
-* DSA (`glCreate*`/`glNamed*`) gives an explicit, Vulkan-like resource model, so
-  a future Vulkan backend implements the same interface without touching the
-  renderer, camera, command, or UI layers.
+* OpenGL 4.1 Core and GLSL 410 also run on macOS. The RAII resource model
+  remains behind the same interface: buffer uploads use `GL_COPY_WRITE_BUFFER`,
+  vertex bindings use per-attribute pointers/divisors, and texture/framebuffer
+  allocation restores the bindings it changes. Streaming buffers still orphan
+  their storage, and camera-only frames still upload zero scene bytes.
 
 Tradeoff: GL keeps implicit global state; we contain it in the RAII wrappers and
 an immediate-mode `GpuCommandBuffer` (the GL backend issues calls as recorded
@@ -2034,7 +2036,7 @@ N placements of one logo decodes once.
 
 ### Deferred: the viewport path
 
-`GpuTexture` in the public `render/gpu/` headers with a GL 4.6 DSA implementation
+`GpuTexture` in the public `render/gpu/` headers with a GL 4.1 implementation
 (`glCreateTextures`/`glTextureStorage2D`/`glTextureSubImage2D`), an image shader pair, and
 a renderer-side texture cache keyed by definition index and invalidated on `version`
 change. Images are few, so a draw call per image is acceptable — but that **raises the
@@ -2488,7 +2490,7 @@ that would be flaky; geometry correctness is asserted numerically elsewhere.
   `GeometryStore`; `IGeometryKernel` + `NativeKernel2D`; `MpscQueue`,
   lock-free `TripleBuffer`, and the `GeometryEngine` worker. 27 unit tests pass
   under ASan/UBSan and ThreadSanitizer; header-hygiene enforced.
-* **Phase 3 — complete:** backend-agnostic GPU abstraction + OpenGL 4.6 backend;
+* **Phase 3 — complete:** backend-agnostic GPU abstraction + OpenGL 4.1 backend;
   camera (pan/zoom-about-cursor), decade-stepping grid, instanced line/point
   rendering, stroke-font FPS overlay; render-thread viewport hosted in the main
   window. 39 unit tests + an offscreen real-GPU verification harness pass.
@@ -2645,7 +2647,7 @@ that would be flaky; geometry correctness is asserted numerically elsewhere.
   append-only pool (snapshots already ignore them; memory reclaim is deferred).
 * **ERASE-Last re-tracking** — an entity restored by undoing an erase is not
   re-tracked for a later `ERASE Last`.
-* **Vulkan backend** — the GPU seam exists; only the OpenGL 4.6 backend is
+* **Vulkan backend** — the GPU seam exists; only the OpenGL 4.1 backend is
   implemented.
 * **Adaptive spatial-index cell size** — currently a fixed uniform grid.
 * **TRIM of arcs/circles/curves** — only line trimming is implemented; curve

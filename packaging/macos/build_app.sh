@@ -13,6 +13,7 @@
 set -euo pipefail
 
 VERSION="${1:?VERSION}"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected X.Y.Z version" >&2; exit 1; }
 BIN="${2:?path to musacad_app}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
@@ -52,12 +53,16 @@ else
   echo "WARNING: rsvg-convert not found; the bundle has no icon"
 fi
 
-echo "==> macdeployqt"
-"$QT_BIN/macdeployqt" "$APP" -verbose=1
-# `--plot` runs on Qt's offscreen platform; macdeployqt bundles only cocoa by itself. The
-# plugin's Qt dependencies are already in the bundle (it links the same QtGui / QtCore
-# through @rpath, resolved against the executable's Frameworks rpath).
+# Copy the headless plugin BEFORE deployment/signing. macdeployqt adjusts its Qt
+# dependencies as well as the executable's; no bundle contents change after signing.
+mkdir -p "$APP/Contents/PlugIns/platforms"
 install -m 755 "$QT_PLUGINS/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
+echo "==> macdeployqt"
+"$QT_BIN/macdeployqt" "$APP" -verbose=1 \
+  "-executable=$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
 
+# Deployment changes Mach-O load commands, invalidating upstream signatures. Even
+# without Developer ID credentials, an Apple Silicon bundle needs valid ad-hoc signatures.
+"$HERE/sign_app.sh" "$APP" "${MACOS_SIGN_IDENTITY:--}"
 echo "==> Built: $APP"
 ls -la "$APP/Contents/MacOS" "$APP/Contents/PlugIns/platforms"

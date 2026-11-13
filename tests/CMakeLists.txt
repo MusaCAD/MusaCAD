@@ -27,6 +27,13 @@ musacad_enable_sanitizers(musacad_render_offscreen)
 set_target_properties(musacad_render_offscreen PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Small pixel-level GPU contract check, including the macOS-compatible GL 4.1 path.
+add_executable(musacad_gl_compat gl_compat.cpp)
+target_link_libraries(musacad_gl_compat PRIVATE musacad::render Qt6::Gui Qt6::OpenGL)
+musacad_enable_sanitizers(musacad_gl_compat)
+set_target_properties(musacad_gl_compat PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # Headless plot verification harness (manual): plots a known circle to a PDF.
 add_executable(musacad_plot_check ${CMAKE_CURRENT_SOURCE_DIR}/../tools/plot_check.cpp)
 target_link_libraries(musacad_plot_check PRIVATE

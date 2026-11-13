@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // The scene's thick lines with their draw order: thickline.vert, each instance carrying the
 // segment's depth too (0 on top .. 1 underneath, DRAWORDER), so a fill drawn over a line

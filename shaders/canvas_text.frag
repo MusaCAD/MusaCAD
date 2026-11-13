@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 uniform vec4 u_color;

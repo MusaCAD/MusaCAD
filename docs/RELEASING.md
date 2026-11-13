@@ -10,7 +10,7 @@ The playbook for cutting a release (v0.2.0 and onward). v0.1.0 followed this exa
 | Linux | `MusaCAD-<ver>-x86_64.AppImage` | `packaging/linux/build_appimage.sh` (local) **and** `.github/workflows/build-linux.yml` (CI) |
 | Linux | `MusaCAD-<ver>.flatpak` | `packaging/flatpak/build_flatpak.sh` (local) |
 | Windows | `MusaCAD-<ver>-x86_64-setup.exe` | `.github/workflows/build-windows.yml` (CI, `windows-latest`) |
-| macOS | `MusaCAD-<ver>-arm64.dmg` (the command line works; the viewport needs OpenGL 4.5, which macOS lacks -- the app says so at startup) | `.github/workflows/build-macos.yml` (CI, `macos-14`) |
+| macOS | `MusaCAD-<ver>-arm64.dmg` + checksum (OpenGL 4.1 viewport; interactive Mac testing required) | `.github/workflows/build-macos.yml` (CI, `macos-latest`) |
 
 Packaging detail lives in `packaging/linux/BUILD_APPIMAGE.md`, `packaging/flatpak/BUILD_FLATPAK.md`
 and `packaging/macos/BUILD_MACOS.md`.

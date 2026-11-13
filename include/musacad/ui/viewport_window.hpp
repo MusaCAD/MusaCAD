@@ -296,10 +296,9 @@ public:
     void block_attribute_manager() override;
     [[nodiscard]] std::vector<core::TiledViewport> tiled_viewports() const override;
     [[nodiscard]] int active_tile() const override;
-    /// The text shown when the OpenGL context falls short of 4.5 Core: the version and
-    /// renderer found, the requirement, and what helps (a driver / GPU with OpenGL 4.5; on
-    /// macOS, which stops at 4.1, that a Metal or OpenGL 4.1 render backend for Musa CAD is
-    /// the missing piece). `on_macos` defaults to the platform this build runs on.
+    /// The text shown when no usable OpenGL 4.1 Core context is available: the version,
+    /// renderer, requirement and platform-specific recovery steps.
+    /// `on_macos` defaults to the platform this build runs on.
     [[nodiscard]] static QString gl_requirement_message(int major, int minor, const QString& renderer,
                                                         bool on_macos =
 #if defined(Q_OS_MACOS)
