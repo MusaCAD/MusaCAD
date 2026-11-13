@@ -53,13 +53,16 @@ else
   echo "WARNING: rsvg-convert not found; the bundle has no icon"
 fi
 
-# Copy the headless plugin BEFORE deployment/signing. macdeployqt adjusts its Qt
-# dependencies as well as the executable's; no bundle contents change after signing.
-mkdir -p "$APP/Contents/PlugIns/platforms"
-install -m 755 "$QT_PLUGINS/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
+# Explicitly deploy dynamically loaded plugins before signing. The SVG image reader
+# draws ribbon icons; linking only QtGui/Widgets does not make macdeployqt detect it.
+DEPLOY_ARGS=()
+for plugin in platforms/libqoffscreen.dylib imageformats/libqsvg.dylib iconengines/libqsvgicon.dylib; do
+  mkdir -p "$APP/Contents/PlugIns/$(dirname "$plugin")"
+  install -m 755 "$QT_PLUGINS/$plugin" "$APP/Contents/PlugIns/$plugin"
+  DEPLOY_ARGS+=("-executable=$APP/Contents/PlugIns/$plugin")
+done
 echo "==> macdeployqt"
-"$QT_BIN/macdeployqt" "$APP" -verbose=1 \
-  "-executable=$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
+"$QT_BIN/macdeployqt" "$APP" -verbose=1 "${DEPLOY_ARGS[@]}"
 
 # Deployment changes Mach-O load commands, invalidating upstream signatures. Even
 # without Developer ID credentials, an Apple Silicon bundle needs valid ad-hoc signatures.

@@ -154,6 +154,7 @@ jobs:
           grep -q 'GL renderer:' gui-check.log
           grep -q 'real-key-into-canvas=1 tab=1' gui-check.log
           grep -q 'viewport resize/hide/show: PASS' gui-check.log
+          grep -q 'packaged SVG icon decode: PASS' gui-check.log
           if grep -E 'shader compile failed|program link failed|viewport disabled' gui-check.log; then exit 1; fi
 
       - name: Collect native GUI crash diagnostics

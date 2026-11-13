@@ -137,6 +137,7 @@
 #include "musacad/ui/parameter_dialog.hpp"
 #include "musacad/ui/dimstyle_dialog.hpp"
 #include <QImage>
+#include <QImageReader>
 #include <QLabel>
 #include <QPageSize>
 #include <QPdfWriter>
@@ -7959,6 +7960,10 @@ bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
     pump(700); // let the GL viewport render a first frame
 
     if (qEnvironmentVariableIsSet("MUSACAD_VIEWPORT_LIFECYCLE_TEST")) {
+        QImageReader icon_reader(QStringLiteral(":/ribbon/line.svg"), "svg");
+        const bool icons_ok = !icon_reader.read().isNull();
+        std::printf("[dyn_shot] packaged SVG icon decode: %s\n", icons_ok ? "PASS" : "FAIL");
+        if (!icons_ok) return false;
         const auto capture = [&](const char* stage) {
             const QString path = QString::fromStdString(out_png + "." + stage + ".png");
             QFile::remove(path);

@@ -38,8 +38,9 @@ image attachment, opening/saving drawings and PDF export on Apple Silicon hardwa
 
 ## Signing and notarization
 
-`build_app.sh` adds the offscreen plugin **before** running `macdeployqt`, including that
-plugin in dependency deployment. `sign_app.sh` then signs Mach-O files and nested bundles
+`build_app.sh` adds the offscreen platform plugin plus the SVG image and icon plugins
+**before** running `macdeployqt`, including them in dependency deployment. The native
+GUI test decodes an embedded ribbon SVG to catch missing image plugins. `sign_app.sh` then signs Mach-O files and nested bundles
 inside-out and verifies the final bundle using `codesign --verify --deep --strict`.
 No deployment mutations occur after the final app signature.
 
