@@ -8,6 +8,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-13
+
 ### Added
 - **Hatches inside blocks** -- fills and patterns in a block definition are drawn wherever
   the block is inserted, turned and scaled with it, and FILLMODE applies. A DWG or DXF brings
@@ -105,6 +107,13 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   `system_variable_names()` (`command/sysvars.hpp`), shared by SETVAR and the export.
 
 ### Changed
+- **Redesigned Dynamic Input (DYN / F12)**: compact antialiased UI-font text replaces the
+  yellow stroke digits. Length, Width, Angle, Radius and Diameter have explicit labels;
+  the active live value is highlighted, typed constraints show a padlock, and angle
+  readouts have a degree sign. Prompts and input values occupy separate rows, with
+  Tab / Enter / options hints during drawing. Fields avoid one another and the prompt,
+  and fields, prompts and command suggestions stay within the viewport at its edges.
+  Tracking tooltips use the same readable type. No changes to the coordinate-entry grammar.
 - ARRAYPATH's default base point is the end of the path curve, as its prompt says: the
   selection stays where it is as the first item and the copies keep its offset from the
   path; a base point of your own goes on the path with the selection (#90).
