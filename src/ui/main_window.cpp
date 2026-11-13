@@ -7958,6 +7958,30 @@ bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
     activateWindow();
     pump(700); // let the GL viewport render a first frame
 
+    if (qEnvironmentVariableIsSet("MUSACAD_VIEWPORT_LIFECYCLE_TEST")) {
+        const auto capture = [&](const char* stage) {
+            const QString path = QString::fromStdString(out_png + "." + stage + ".png");
+            QFile::remove(path);
+            viewport_->request_frame_capture(path.toStdString());
+            for (int i = 0; i < 100 && !QFile::exists(path); ++i) pump(50);
+            return QFile::exists(path);
+        };
+        resize(1080, 760);
+        pump(200);
+        const bool resized = capture("resized");
+        hide();
+        pump(100);
+        show();
+        raise();
+        activateWindow();
+        pump(200);
+        const bool restored = capture("restored");
+        resize(1200, 820);
+        pump(200);
+        std::printf("[dyn_shot] viewport resize/hide/show: %s\n", resized && restored ? "PASS" : "FAIL");
+        if (!resized || !restored) return false;
+    }
+
     engine_->submit(core::NewDocumentCommand{});
     pump(200);
     dyn_action_->setChecked(true); // F12: enable DYN box + on-geometry tooltips

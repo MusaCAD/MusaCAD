@@ -402,14 +402,23 @@ submit shape supports both).
 
 ### Render thread and the snapshot
 
-`ViewportWindow` (a `QWindow`) runs a dedicated render thread (`std::jthread`)
-that exclusively owns the GL context. Each frame it consumes the latest snapshot
+`ViewportWindow` (a `QWindow`) uses a dedicated render thread (`std::jthread`)
+on Linux and Windows. macOS uses a GUI-thread timer: Cocoa requires OpenGL view
+attachment, drawable updates and teardown on the main thread. Both use the same
+render-session/frame implementation and keep geometry computation on its worker.
+A session owns its GL context and releases its resources with that context current,
+using an offscreen surface if the native window has been destroyed.
+
+Each frame it consumes the latest snapshot
 from the existing `GeometryEngine` triple buffer (lock-free; **no second handoff
 path**) and draws it. It never touches the `GeometryStore`. Camera input is
 handled on the GUI thread and shared under a small lock; the `Camera2D`
 transform is pure CPU, so pan/zoom never involve the geometry thread.
 
 ### Input latency: frame pacing (late latching)
+
+The Linux/Windows render worker uses the following pacing. The macOS GUI timer
+runs at the screen refresh interval without sleeping inside the event loop.
 
 With vsync, a frame rendered the moment the previous one was handed to the display
 carries input that is a whole refresh old by the time it is scanned out. Rendering takes

@@ -149,10 +149,11 @@ jobs:
         run: |
           set -euo pipefail
           unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
-          MUSACAD_DYN_SHOT="0|$PWD/macos-dyn.png" MusaCAD.app/Contents/MacOS/musacad_app > gui-check.log 2>&1
+          MUSACAD_VIEWPORT_LIFECYCLE_TEST=1 MUSACAD_DYN_SHOT="0|$PWD/macos-dyn.png" MusaCAD.app/Contents/MacOS/musacad_app > gui-check.log 2>&1
           test -s macos-dyn.png
           grep -q 'GL renderer:' gui-check.log
           grep -q 'real-key-into-canvas=1 tab=1' gui-check.log
+          grep -q 'viewport resize/hide/show: PASS' gui-check.log
           if grep -E 'shader compile failed|program link failed|viewport disabled' gui-check.log; then exit 1; fi
 
       - name: Collect native GUI crash diagnostics
@@ -161,7 +162,7 @@ jobs:
         run: |
           unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
           MUSACAD_DYN_SHOT="0|$PWD/macos-dyn-debug.png" QT_LOGGING_RULES='qt.qpa.openglcontext.debug=true' \
-            lldb --batch -o run -o 'thread backtrace all' -- MusaCAD.app/Contents/MacOS/musacad_app > lldb-check.log 2>&1 || true
+            lldb --batch -o run -k 'thread backtrace all' -- MusaCAD.app/Contents/MacOS/musacad_app > lldb-check.log 2>&1 || true
           mkdir -p macos-diagnostics
           for report in "$HOME"/Library/Logs/DiagnosticReports/musacad_app*; do
             if [ -f "$report" ]; then cp "$report" macos-diagnostics/; fi
@@ -250,7 +251,7 @@ jobs:
             gui-check.log
             lldb-check.log
             macos-diagnostics/
-            macos-dyn.png
+            macos-dyn*.png
             *-notary.json
           if-no-files-found: ignore
 

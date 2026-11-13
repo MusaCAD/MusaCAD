@@ -18,9 +18,16 @@ than OpenGL 4.5 direct state access. Instancing, antialiased lines and DYN text,
 draw-order depth and streaming-buffer orphaning remain available through the existing
 `GpuDevice` interface. The same backend runs on Linux and Windows.
 
+On macOS, a GUI-thread timer owns the GL context and draws each frame. Cocoa requires
+view attachment, drawable updates and teardown on the main thread. Geometry computation
+remains on its worker; Linux and Windows retain the dedicated render thread. A shared
+render session keeps the same drawing path and releases GPU resources with a current
+context, including when the native window surface has already been destroyed.
+
 CI runs a small GPU pixel test for vertex offsets, multiple attribute bindings,
 instance divisors, buffer updates, texture units, alpha, depth, clipping and framebuffer
-resize. It then captures DYN in an actual Cocoa viewport. Headless `--check` and `--plot`
+resize. It then checks window resize/hide/show and captures DYN typing and Tab navigation
+in an actual Cocoa viewport. Headless `--check` and `--plot`
 run from outside the checkout, with Qt deployment environment overrides removed.
 Finally CI mounts the produced DMG and verifies the packaged app's signature and CLI.
 Logs and a screenshot are retained as the `macos-verification` artifact.
