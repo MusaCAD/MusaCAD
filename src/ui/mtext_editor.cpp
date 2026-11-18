@@ -57,6 +57,7 @@ MTextEditor::MTextEditor(const QString& source, double height, const QString& fo
     height_box->setObjectName(QStringLiteral("MTextHeight"));
     height_box->setRange(std::max(0.000001, height_ / 1024.0), std::min(1000000000.0, height_ * 64.0));
     height_box->setDecimals(3);
+    height_box->setKeyboardTracking(false);
     height_box->setValue(height_);
     height_box->setPrefix(QStringLiteral("Height "));
     height_box->setToolTip(QStringLiteral("Height of the selected characters in drawing units"));
@@ -87,9 +88,9 @@ MTextEditor::MTextEditor(const QString& source, double height, const QString& fo
         editor_->mergeCurrentCharFormat(f);
         editor_->setFocus();
     };
-    connect(family, &QFontComboBox::currentFontChanged, this, [merge](const QFont& f) {
+    connect(family, &QComboBox::activated, this, [family, merge] {
         QTextCharFormat fmt;
-        fmt.setFontFamilies({f.family()});
+        fmt.setFontFamilies({family->currentFont().family()});
         merge(fmt);
     });
     connect(height_box, &QDoubleSpinBox::valueChanged, this, [this, merge](double h) {
