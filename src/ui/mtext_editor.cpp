@@ -65,6 +65,8 @@ MTextEditor::MTextEditor(const QString& source, double height, const QString& fo
     layout->addWidget(format);
     editor_ = new QTextEdit(this);
     editor_->setObjectName(QStringLiteral("MTextContent"));
+    // Keep editing legible regardless of the ribbon's compact application font.
+    editor_->setStyleSheet(QStringLiteral("QTextEdit { font-size: 14pt; }"));
     editor_->setAcceptRichText(false); // paste text; imported HTML must not introduce unsupported styles
     QFont base = editor_->font();
     if (!font.isEmpty() && font.compare(QStringLiteral("Standard"), Qt::CaseInsensitive) != 0) {

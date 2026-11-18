@@ -1523,6 +1523,13 @@ void MainWindow::dump_ui() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // A modal editor owns every key, including when a toolbar button has focus.
+    // Routing Escape to the drawing here could destroy the command whose editor
+    // is still running inside its input handler.
+    if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) &&
+        QApplication::activeModalWidget() != nullptr) {
+        return QMainWindow::eventFilter(watched, event);
+    }
     // The layer combo's list: a click on a state icon switches the layer on or off, freezes
     // or thaws it, locks or unlocks it, in place, the list staying open.
     // The mouse first: view() makes the list when there is none yet, and the events of its
@@ -6980,6 +6987,8 @@ bool MainWindow::selftest_drafting() {
         return false;
     };
     bool all = true;
+    const bool saved_dyn = dyn_action_->isChecked();
+    dyn_action_->setChecked(true);
     const auto check = [&](bool ok, const char* label) {
         std::printf("[selftest] drafting %s: %s\n", label, ok ? "PASS" : "FAIL");
         all = all && ok;
@@ -7066,15 +7075,23 @@ bool MainWindow::selftest_drafting() {
         check(pump([&] { return viewport_->text_contents() == contents; }), "one undo restores original formatted text");
     }
     // Cancelled creation must not leave an empty object or an active command.
-    QTimer::singleShot(100, this, [] {
-        if (auto* dlg = QApplication::activeModalWidget()) static_cast<QDialog*>(dlg)->reject();
+    bool command_survived_escape = false;
+    QTimer::singleShot(100, this, [&] {
+        if (auto* dlg = QApplication::activeModalWidget()) {
+            auto* button = dlg->findChild<QPushButton*>(QStringLiteral("MTextCancel"));
+            button->setFocus();
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(button, &escape);
+            command_survived_escape = processor_->has_active_command();
+        }
     });
     processor_->submit_line("MTEXT");
     processor_->submit_line("200,0");
     processor_->submit_line("300,-40");
-    check(!processor_->has_active_command() && viewport_->text_contents().size() == contents.size(),
-          "cancelled creation adds no object");
+    check(command_survived_escape && !processor_->has_active_command() && viewport_->text_contents().size() == contents.size(),
+          "Escape from an editor button safely cancels creation");
     engine_->submit(core::NewDocumentCommand{});
+    dyn_action_->setChecked(saved_dyn);
     command_widget_->focus_input();
     return all;
 }
