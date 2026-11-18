@@ -1441,25 +1441,6 @@ void MainWindow::build_status_bar() {
     osnap_btn->setMenu(osnap_menu);
     osnap_btn->setPopupMode(QToolButton::MenuButtonPopup);
 
-    // An update found by the background check shows here, quietly, until the user opens
-    // it or skips that version -- never as a window over the drawing.
-    update_button_ = new QToolButton(this);
-    update_button_->setObjectName(QStringLiteral("UpdateIndicator"));
-    update_button_->setAutoRaise(true);
-    update_button_->setFocusPolicy(Qt::NoFocus);
-    update_button_->setCursor(Qt::PointingHandCursor);
-    update_button_->setVisible(false);
-    connect(update_button_, &QToolButton::clicked, this, [this] {
-        show_update_dialog(
-            this, pending_update_, UpdateChecker::detect_channel(),
-            [this] {
-                QSettings().setValue(QStringLiteral("updates/skipped"), pending_update_.latest);
-                update_button_->setVisible(false);
-            },
-            [this] { return save_all_before_quit(); }); // before an in-place update replaces the program
-    });
-    statusBar()->addPermanentWidget(update_button_);
-
     coord_label_ = new QLabel(QStringLiteral("0.000, 0.000"), this);
     coord_label_->setObjectName(QStringLiteral("CoordReadout"));
     statusBar()->addPermanentWidget(coord_label_);
@@ -11055,10 +11036,10 @@ void MainWindow::update_title() {
     // With the performance overlay on: the frame rate and the build stamp, so a stale
     // binary is obvious at a glance.
     const int fps = viewport_ != nullptr ? static_cast<int>(viewport_->fps() + 0.5) : 0;
-    setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS  —  built %5")
+    setWindowTitle(QStringLiteral("%1%2  —  %3  —  %4 FPS  —  build %5")
                        .arg(name, mark, app)
                        .arg(fps)
-                       .arg(QStringLiteral(__DATE__ " " __TIME__)));
+                       .arg(QString::fromStdString(std::string(core::build_id()))));
 }
 
 QString MainWindow::active_doc_name() const {
@@ -12210,8 +12191,8 @@ std::string MainWindow::crash_report_about() {
     case update::Channel::SourceBuild:
         break;
     }
-    QString about = QStringLiteral("Musa CAD %1 (built %2), installed as: %3\n")
-                        .arg(sv(core::version_string()), QStringLiteral(__DATE__ " " __TIME__), QLatin1String(channel));
+    QString about = QStringLiteral("Musa CAD %1 (build %2), installed as: %3\n")
+                        .arg(sv(core::version_string()), sv(core::build_id()), QLatin1String(channel));
     about += QStringLiteral("System: %1 (%2 %3, %4)\n")
                  .arg(QSysInfo::prettyProductName(), QSysInfo::kernelType(), QSysInfo::kernelVersion(),
                       QSysInfo::currentCpuArchitecture());
@@ -12359,11 +12340,11 @@ void MainWindow::show_about() {
     lay->addWidget(title);
 
     auto* info = new QLabel(
-        QStringLiteral("Version %1<br>Built %2<br><br>"
+        QStringLiteral("Version %1<br>Build %2<br><br>"
                        "A high-performance, multi-threaded 2D CAD engine.<br>"
                        "© Musa CAD contributors — licensed under the "
                        "<b>GNU LGPL-3.0-or-later</b>.")
-            .arg(sv(core::version_string()), QStringLiteral(__DATE__ " " __TIME__)),
+            .arg(sv(core::version_string()), sv(core::build_id())),
         &dlg);
     info->setTextFormat(Qt::RichText);
     info->setAlignment(Qt::AlignCenter);
@@ -12559,10 +12540,80 @@ void MainWindow::show_update_indicator(const UpdateChecker::Result& result) {
         return;
     }
     pending_update_ = result;
-    update_button_->setText(QStringLiteral("Update available: %1").arg(result.latest));
+    update_button_->setAccessibleName(QStringLiteral("Update available: %1").arg(result.latest));
     update_button_->setToolTip(
         QStringLiteral("Musa CAD %1 is available. Click to see what's new and how to update.").arg(result.latest));
     update_button_->setVisible(true);
+}
+
+bool MainWindow::selftest_updates() {
+    QSettings settings;
+    const QVariant saved_skip = settings.value(QStringLiteral("updates/skipped"));
+    settings.remove(QStringLiteral("updates/skipped"));
+    UpdateChecker::Result result;
+    result.ok = true;
+    result.latest = UpdateChecker::current_version();
+    show_update_indicator(result);
+    bool ok = update_button_->isHidden();
+    result.latest = QStringLiteral("999.0.0");
+    show_update_indicator(result);
+    QApplication::processEvents();
+    const auto* search = findChild<QLineEdit*>(QStringLiteral("CommandSearch"));
+    ok = ok && update_button_->isVisible() && !update_button_->icon().isNull() &&
+         update_button_->toolButtonStyle() == Qt::ToolButtonIconOnly && search != nullptr;
+    if (search != nullptr) {
+        const QPoint button = update_button_->mapToGlobal(QPoint(0, 0));
+        const QPoint field = search->mapToGlobal(QPoint(0, 0));
+        ok = ok && button.x() >= field.x() + search->width() &&
+             std::abs(button.y() - field.y()) < 12;
+    }
+    if (const QString shot = qEnvironmentVariable("MUSACAD_UPDATE_SHOT"); !shot.isEmpty()) {
+        ok = grab().save(shot) && ok;
+    }
+    update_button_->click();
+    QApplication::processEvents();
+    bool opened = false;
+    bool skipped = false;
+    for (auto* dlg : findChildren<QDialog*>()) {
+        if (dlg->windowTitle() != QStringLiteral("Update Available") || !dlg->isVisible()) {
+            continue;
+        }
+        opened = true;
+        for (auto* button : dlg->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("Skip This Version")) {
+                button->click();
+                skipped = true;
+                break;
+            }
+        }
+    }
+    show_update_indicator(result);
+    ok = ok && opened && skipped && update_button_->isHidden();
+    settings.remove(QStringLiteral("updates/skipped"));
+    result.latest = QStringLiteral("999.0.1");
+    show_update_indicator(result);
+    ok = ok && update_button_->isVisible();
+    result.latest = UpdateChecker::current_version();
+    show_update_indicator(result);
+    ok = ok && update_button_->isHidden();
+    if (saved_skip.isValid()) {
+        settings.setValue(QStringLiteral("updates/skipped"), saved_skip);
+    }
+    if (const QString shot = qEnvironmentVariable("MUSACAD_ABOUT_SHOT"); !shot.isEmpty()) {
+        QTimer::singleShot(150, this, [this, shot] {
+            for (auto* dlg : findChildren<QDialog*>()) {
+                if (dlg->windowTitle().startsWith(QStringLiteral("About "))) {
+                    dlg->grab().save(shot);
+                    dlg->accept();
+                }
+            }
+        });
+        show_about();
+    }
+    command_widget_->focus_input();
+    std::printf("[selftest] update icon: discovery, search placement, details, skip and current version: %s\n",
+                ok ? "PASS" : "FAIL");
+    return ok;
 }
 
 void MainWindow::open_options_dialog() {
@@ -12629,8 +12680,7 @@ void MainWindow::open_options_dialog() {
 // --- Plot / print ----------------------------------------------------------
 
 namespace {
-// Compile-time build stamp so a stale binary is obvious at a glance (provenance + title).
-constexpr const char* kBuildStamp = __DATE__ " " __TIME__;
+// The source revision is stable across reproducible builds of the same checkout.
 
 // One self-documenting provenance line: the FULLY RESOLVED spec actually being plotted,
 // plus the build that produced it. Every plot logs this so each PDF is evidence.
@@ -12642,7 +12692,7 @@ std::string describe_plot_spec(const PlotSpec& s, const char* ctx) {
     std::snprintf(buf, sizeof(buf),
                   "[plot-spec] %s | build=%s | area=%s win=(%.1f,%.1f)..(%.1f,%.1f) fit=%d "
                   "scale=%.4f:%.4f orient=%s paper=%.0fx%.0fmm center=%d lw=%d target=%s",
-                  ctx, kBuildStamp, area, s.win_min.x, s.win_min.y, s.win_max.x, s.win_max.y,
+                  ctx, core::build_id().data(), area, s.win_min.x, s.win_min.y, s.win_max.x, s.win_max.y,
                   s.fit ? 1 : 0, s.scale_num, s.scale_den, s.landscape ? "landscape" : "portrait",
                   s.paper_w_mm, s.paper_h_mm, s.center ? 1 : 0, s.plot_lineweights ? 1 : 0,
                   s.target.c_str());

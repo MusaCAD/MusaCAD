@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/core/version.hpp"
+#include "build_info.hpp"
 
 #ifndef MUSACAD_VERSION
 #define MUSACAD_VERSION "0.0.0"
@@ -15,6 +16,10 @@ std::string_view app_name() noexcept {
 
 std::string_view version_string() noexcept {
     return MUSACAD_VERSION;
+}
+
+std::string_view build_id() noexcept {
+    return MUSACAD_BUILD_ID;
 }
 
 } // namespace musacad::core

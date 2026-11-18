@@ -1370,6 +1370,28 @@ void MainWindow::build_ribbon() {
         ribbon_->add_strip_widget(search);
     }
 
+    // A quiet update indicator next to command search; details open only on request.
+    update_button_ = new QToolButton(this);
+    update_button_->setObjectName(QStringLiteral("UpdateIndicator"));
+    update_button_->setAutoRaise(true);
+    update_button_->setFocusPolicy(Qt::StrongFocus);
+    update_button_->setIcon(QIcon(QStringLiteral(":/ribbon/update.svg")));
+    update_button_->setIconSize(QSize(18, 18));
+    update_button_->setFixedSize(28, 28);
+    update_button_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    update_button_->setCursor(Qt::PointingHandCursor);
+    update_button_->setVisible(false);
+    connect(update_button_, &QToolButton::clicked, this, [this] {
+        show_update_dialog(
+            this, pending_update_, UpdateChecker::detect_channel(),
+            [this] {
+                QSettings().setValue(QStringLiteral("updates/skipped"), pending_update_.latest);
+                update_button_->setVisible(false);
+            },
+            [this] { return save_all_before_quit(); }); // before an in-place update replaces the program
+    });
+    ribbon_->add_strip_widget(update_button_);
+
     setMenuWidget(ribbon_);
 }
 

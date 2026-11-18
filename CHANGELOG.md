@@ -8,6 +8,20 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## Unreleased
 
+### Changed
+- Available updates appear as a small icon beside command search. The tooltip names the
+  new version; clicking opens update details. Current and skipped versions stay hidden.
+- About, crash reports and plot diagnostics identify the source revision instead of a
+  compiler timestamp, which reproducible Flatpak builds replace with a fixed date.
+
+### Fixed
+- Rotated linear dimensions imported from DXF use the default horizontal angle when
+  group 50 is absent, preserving the correct measurement (#99).
+- Dimension text with line breaks or literal backslashes survives saving and reopening,
+  including prefixes, suffixes and inspection labels/rates (#100). Native format v50
+  stores these strings with escapes. Older drawings still open; newly saved drawings
+  require a version of Musa CAD that supports format v50.
+
 ## 0.9.0 - 2026-11-13
 
 ### Added

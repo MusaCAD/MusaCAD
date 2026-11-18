@@ -256,6 +256,10 @@ int main(int argc, char* argv[]) {
     // Real-window self-test for the Delete-key route (Phase 9).
     if (qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
         QTimer::singleShot(900, &window, [&window, &app] {
+            if (qEnvironmentVariable("MUSACAD_SELFTEST") == QLatin1String("updates")) {
+                app.exit(window.selftest_updates() ? 0 : 1);
+                return;
+            }
             const bool ok_delete = window.selftest_delete();
             const bool ok_modify = window.selftest_modify();
             const bool ok_dialog = window.selftest_dialog();
@@ -269,6 +273,7 @@ int main(int argc, char* argv[]) {
             const bool ok_linetype = window.selftest_linetype();
             const bool ok_dimprops = window.selftest_dim_properties();
             const bool ok_dyn = window.selftest_dyn();
+            const bool ok_updates = window.selftest_updates();
             const bool ok_pdlg = window.selftest_param_dialogs();
             const bool ok_dwg = window.selftest_dwg();
             const bool ok_cmds = window.selftest_commands();
@@ -277,7 +282,7 @@ int main(int argc, char* argv[]) {
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
                             ok_linetype && ok_dimprops && ok_dyn && ok_pdlg && ok_dwg &&
-                            ok_cmds && ok_vports && ok_band;
+                            ok_cmds && ok_vports && ok_band && ok_updates;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });
