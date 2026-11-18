@@ -13,4 +13,7 @@ namespace musacad::core {
 /// Semantic version string, e.g. "0.1.0", sourced from the build system.
 [[nodiscard]] std::string_view version_string() noexcept;
 
+/// Source revision, refreshed on each build; independent of compiler timestamps.
+[[nodiscard]] std::string_view build_id() noexcept;
+
 } // namespace musacad::core

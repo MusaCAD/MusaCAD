@@ -395,3 +395,56 @@ TEST_CASE("Plot line-batch convention: for_each_line_segment yields exact pairs,
         REQUIRE(length(c - a) < 5.0);
     }
 }
+
+
+TEST_CASE("#100 dimension text preserves line breaks and literal backslashes on save") {
+    Document doc;
+    DocDim dim;
+    dim.a = {0, 0};
+    dim.b = {17, 52};
+    dim.prefix = "first\nsecond\\n";
+    dim.suffix = "suffix\\end\n";
+    dim.text_override = "<>\n(TYP)\\P";
+    dim.inspect = 1;
+    dim.inspect_label = "label\nnext\\n";
+    dim.inspect_rate = "50%\nrate\\end";
+    doc.dims.push_back(dim);
+    const std::string saved = serialize_native(doc);
+    Document back;
+    const auto result = parse_native(saved, back);
+    INFO(result.message);
+    REQUIRE(result.ok);
+    REQUIRE(back.dims == doc.dims);
+    REQUIRE(serialize_native(back) == saved);
+}
+
+TEST_CASE("#100 older dimension labels keep literal escapes and upgrade safely") {
+    Document doc;
+    DocDim dim;
+    dim.prefix = "PREFIX_MARKER";
+    dim.suffix = "SUFFIX_MARKER";
+    dim.text_override = "OVERRIDE_MARKER";
+    dim.inspect = 1;
+    dim.inspect_label = "LABEL_MARKER";
+    dim.inspect_rate = "RATE_MARKER";
+    doc.dims.push_back(dim);
+    std::string old = serialize_native(doc);
+    old.replace(0, old.find('\n'), "MUSACAD 49");
+    const std::string literal = R"(C:\new\notes\\end)";
+    for (const std::string marker : {"PREFIX_MARKER", "SUFFIX_MARKER", "OVERRIDE_MARKER", "LABEL_MARKER", "RATE_MARKER"}) {
+        old.replace(old.find(marker), marker.size(), literal);
+    }
+    Document back;
+    REQUIRE(parse_native(old, back).ok);
+    REQUIRE(back.dims.size() == 1);
+    CHECK(back.dims[0].prefix == literal);
+    CHECK(back.dims[0].suffix == literal);
+    CHECK(back.dims[0].text_override == literal);
+    CHECK(back.dims[0].inspect_label == literal);
+    CHECK(back.dims[0].inspect_rate == literal);
+    back.dims[0].text_override += "\n(TYP)";
+    Document upgraded;
+    REQUIRE(parse_native(serialize_native(back), upgraded).ok);
+    CHECK(upgraded.format_version == kFormatVersion);
+    CHECK(upgraded.dims == back.dims);
+}

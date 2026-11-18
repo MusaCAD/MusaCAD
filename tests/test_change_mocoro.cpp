@@ -2019,13 +2019,14 @@ TEST_CASE("Feet and inches drop zero feet and zero inches as DIMZIN says") {
     old.name = "Imperial";
     old.zero_suppression = 0;
     doc.dimstyles.push_back(old);
-    doc.format_version = 39;
+    std::string legacy = io::serialize_native(doc);
+    legacy.replace(0, legacy.find('\n'), "MUSACAD 39");
     io::Document back;
-    REQUIRE(io::parse_native(io::serialize_native(doc), back).ok);
+    REQUIRE(io::parse_native(legacy, back).ok);
     REQUIRE((back.dimstyles.back().zero_suppression & kDimZinFeetInches) == 1);
-    doc.format_version = 40;
+    legacy.replace(0, legacy.find('\n'), "MUSACAD 40");
     io::Document now;
-    REQUIRE(io::parse_native(io::serialize_native(doc), now).ok);
+    REQUIRE(io::parse_native(legacy, now).ok);
     REQUIRE((now.dimstyles.back().zero_suppression & kDimZinFeetInches) == 0);
 }
 

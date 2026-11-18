@@ -132,6 +132,8 @@ public:
     /// Real-window self-test: Dynamic Input (toggle, type-at-cursor, exact length,
     /// and THE focus rule -- Delete/typing-guard/Esc still correct with DYN on).
     bool selftest_dyn();
+    /// Update discovery, ribbon placement, details and skipped-version behavior.
+    bool selftest_updates();
     /// Real-window self-test for the commands added in the STRETCH/tables/arrays pass:
     /// STRETCH through the GUI with ORTHO ON (the setting that used to defeat it),
     /// table cell editing and row resize, POLYGON, DIVIDE, BREAK and ARRAYPATH. Each is
@@ -533,8 +535,8 @@ private:
     bool perf_overlay_ = false;                 // Options > Show performance overlay
     UpdateChecker* updater_ = nullptr;          // created on the first check
     bool update_check_manual_ = false;          // the check in flight was asked for
-    UpdateChecker::Result pending_update_;      // what the status-bar indicator opens
-    QToolButton* update_button_ = nullptr;      // status-bar "update available" indicator
+    UpdateChecker::Result pending_update_;      // what the ribbon indicator opens
+    QToolButton* update_button_ = nullptr;      // update icon beside command search
     std::vector<QToolButton*> selection_required_buttons_;
     std::vector<std::pair<std::uint32_t, QAction*>> osnap_actions_; ///< OSNAP dropdown toggles
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line

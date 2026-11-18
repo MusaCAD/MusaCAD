@@ -153,8 +153,22 @@ bool to_uint(std::string_view t, std::uint64_t& out) {
     return ec == std::errc{} && ptr == t.data() + t.size();
 }
 
-// Parses `n` doubles starting at token `start` into `out` (appended).
-// Reverse of the MTEXT/MLEADER content escaping (\n -> newline, \\ -> backslash).
+// Content is stored on one physical line; preserve both line breaks and literal escapes.
+std::string escape(std::string_view in) {
+    std::string out;
+    for (const char c : in) {
+        if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\\') {
+            out += "\\\\";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// Reverse of the single-line content escaping (\n -> newline, \\ -> backslash).
 std::string unescape(std::string_view in) {
     std::string o;
     o.reserve(in.size());
@@ -298,7 +312,7 @@ std::string serialize_native(const Document& doc) {
     std::string s;
     s.reserve(128 + doc.entity_count() * 40);
     s += "MUSACAD ";
-    append_uint(s, doc.format_version);
+    append_uint(s, kFormatVersion);
     s += '\n';
     s += "UNITS ";
     s += doc.units.empty() ? "unitless" : doc.units;
@@ -1089,7 +1103,7 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, d.style);
         append_props(s, d.props);
         append_overrides(s, d.overrides); // per-dimension overrides (v8): full block => lossless
-        // v15 decoration: mode + the two deviations inline, then the raw prefix/suffix
+        // v15 decoration: mode + the two deviations inline, then the prefix/suffix
         // on their own lines (they may contain spaces, so they cannot be tokens).
         s += ' ';
         append_uint(s, static_cast<std::uint64_t>(d.tol.mode));
@@ -1097,7 +1111,7 @@ std::string serialize_native(const Document& doc) {
         append_double(s, d.tol.upper);
         s += ' ';
         append_double(s, d.tol.lower);
-        // v19: the label displacement inline, the raw override on its own line (it may
+        // v19: the label displacement inline, the override on its own line (it may
         // contain spaces, so it cannot be a token -- the same reason prefix/suffix are lines).
         s += ' ';
         append_vec(s, d.text_offset);
@@ -1115,16 +1129,16 @@ std::string serialize_native(const Document& doc) {
         s += ' '; // v40: DIMINSPECT's frame; its label and rate follow the override line
         append_uint(s, d.inspect);
         s += '\n';
-        s += d.prefix;
+        s += escape(d.prefix);
         s += '\n';
-        s += d.suffix;
+        s += escape(d.suffix);
         s += '\n';
-        s += d.text_override;
+        s += escape(d.text_override);
         s += '\n';
         if (d.inspect != 0) {
-            s += d.inspect_label;
+            s += escape(d.inspect_label);
             s += '\n';
-            s += d.inspect_rate;
+            s += escape(d.inspect_rate);
             s += '\n';
         }
         if (d.unassoc) {
@@ -1190,21 +1204,6 @@ std::string serialize_native(const Document& doc) {
         append_double(s, b.line_spacing);
         s += ' ';
         append_uint(s, b.attach);
-    };
-    // Content may contain newlines; escape them so each record stays one line + one
-    // content line.
-    const auto escape = [](std::string_view in) {
-        std::string o;
-        for (const char c : in) {
-            if (c == '\n') {
-                o += "\\n";
-            } else if (c == '\\') {
-                o += "\\\\";
-            } else {
-                o += c;
-            }
-        }
-        return o;
     };
     for (const DocMText& m : doc.mtexts) {
         s += "MTEXT ";
@@ -2814,6 +2813,15 @@ IoResult parse_native(std::string_view text, Document& out) {
                         return fail("DIM missing inspection label/rate line");
                     }
                 }
+            }
+            // v50 escapes these fields. Earlier files contain literal backslashes,
+            // so interpreting escapes there would silently change existing labels.
+            if (version >= 50) {
+                dprefix = unescape(dprefix);
+                dsuffix = unescape(dsuffix);
+                doverride = unescape(doverride);
+                dinspect_label = unescape(dinspect_label);
+                dinspect_rate = unescape(dinspect_rate);
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
                                       {vals[0], vals[1]},

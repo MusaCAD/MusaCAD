@@ -255,8 +255,9 @@ QStatusBar QLabel#CoordReadout {
     padding: 0 8px;
 }
 /* An available update: the mark's teal, quiet until hovered. */
-QStatusBar QToolButton#UpdateIndicator { color: #0bd1b5; }
-QStatusBar QToolButton#UpdateIndicator:hover { color: #ffffff; background: #1f4d47; border-radius: 3px; }
+QToolButton#UpdateIndicator { padding: 3px; border: 1px solid transparent; border-radius: 4px; }
+QToolButton#UpdateIndicator:hover { background: #1f4d47; }
+QToolButton#UpdateIndicator:focus { border-color: #0bd1b5; }
 )QSS");
 }
 

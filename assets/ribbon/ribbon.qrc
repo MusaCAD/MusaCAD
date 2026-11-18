@@ -1,6 +1,7 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
   <qresource prefix="/ribbon">
+    <file>update.svg</file>
     <file>align.svg</file>
     <file>arc.svg</file>
     <file>array.svg</file>

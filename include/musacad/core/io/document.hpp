@@ -73,7 +73,9 @@ namespace musacad::core::io {
 /// configurations as VPORTSAVE <name> <n> followed by n VPORTCFG records.
 /// v34: VPLAYER -- a VPFREEZE line after a VIEWPORT record (the layers frozen in it) and
 /// VPFRZNEW lines after the layer table (layers frozen in viewports created later).
-inline constexpr std::uint32_t kFormatVersion = 49;
+/// v50: DIM prefix/suffix, text override and inspection label/rate escape backslashes
+/// and newlines. Versions through v49 retain their literal string interpretation.
+inline constexpr std::uint32_t kFormatVersion = 50;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).

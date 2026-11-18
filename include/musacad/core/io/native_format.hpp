@@ -16,7 +16,7 @@ namespace musacad::core::io {
 // locale-independent), so save -> load reproduces the document byte-for-byte in
 // value. Strict parsing -- any malformed record fails without mutating `out`.
 
-/// Serializes a document to the native text form (no disk access).
+/// Serializes a document using the current format version (no disk access).
 [[nodiscard]] std::string serialize_native(const Document& doc);
 
 /// Parses the native text form. On success fills `out` and returns ok; on any

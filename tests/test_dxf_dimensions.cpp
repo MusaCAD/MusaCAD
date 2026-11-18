@@ -467,3 +467,18 @@ TEST_CASE("#93 MINSERT places the whole grid") {
     // A plain INSERT stays one.
     CHECK(parsed(dxf_of("0\nINSERT\n8\n0\n2\nB\n10\n1\n20\n2\n", blk)).inserts.size() == 1);
 }
+
+TEST_CASE("#99 omitted linear rotation is horizontal even when the Y delta is larger") {
+    const std::string points = p(10, {8, -5}) + p(13, {0, 0}) + p(14, {17, 52});
+    for (const std::string angle : {std::string{}, std::string{"50\n0\n"}, std::string{"50\n90\n"}}) {
+        CAPTURE(angle);
+        const Document doc = parsed(dxf_of(dim(160, points, "100\nAcDbRotatedDimension\n" + angle)));
+        REQUIRE(doc.dims.size() == 1);
+        CHECK(dim_measure(data_of(doc.dims[0])) == Approx(angle == "50\n90\n" ? 52.0 : 17.0));
+        const Document back = parsed(serialize_dxf(doc));
+        REQUIRE(back.dims.size() == 1);
+        CHECK(dim_measure(data_of(back.dims[0])) == Approx(dim_measure(data_of(doc.dims[0]))));
+    }
+    const Document aligned = parsed(dxf_of(dim(161, points)));
+    CHECK(dim_measure(data_of(aligned.dims[0])) == Approx(std::hypot(17.0, 52.0)));
+}

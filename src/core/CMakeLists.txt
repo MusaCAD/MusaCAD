@@ -56,3 +56,14 @@ endif()
 # musacad_core builds with warnings promoted to errors.
 musacad_set_warnings(musacad_core AS_ERRORS)
 musacad_enable_sanitizers(musacad_core)
+
+# Refresh provenance even when HEAD changes without a CMake reconfigure. The script
+# updates the header only when its contents change, so idle builds do not recompile.
+add_custom_target(musacad_build_info
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
+            -P "${CMAKE_SOURCE_DIR}/cmake/BuildInfo.cmake"
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.hpp"
+    VERBATIM)
+add_dependencies(musacad_core musacad_build_info)
+target_include_directories(musacad_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
