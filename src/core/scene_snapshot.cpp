@@ -604,7 +604,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             out.text_edit_targets.push_back(TextEditTarget{
                 h, frame.origin, {frame.origin.x, frame.origin.y},
                 {frame.origin.x + frame.width(), frame.origin.y + frame.height}, frame.height,
-                frame.rotation, false, std::string(store.string_of(*t))});
+                frame.rotation, false, std::string(store.string_of(*t)), std::string(store.font_name(t->font))});
         }
     });
 
@@ -678,7 +678,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
             }
             out.text_edit_targets.push_back(TextEditTarget{h, g.text_pos[i], lo, hi,
                                                           g.text_height[i], g.rotation,
-                                                          /*multiline=*/false, std::move(raw)});
+                                                          /*multiline=*/false, std::move(raw), {}});
             if (g.cell_text[i].empty()) {
                 continue;
             }
@@ -856,7 +856,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
-                                                           std::string(store.string_of(m->text))});
+                                                           std::string(store.string_of(m->text)), std::string(store.font_name(m->text.font))});
         }
     });
 
@@ -936,7 +936,7 @@ void build_render_snapshot_in(const GeometryStore& store, const IGeometryKernel&
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
                                                            m->text.height, m->text.rotation, true,
-                                                           std::string(store.string_of(m->text))});
+                                                           std::string(store.string_of(m->text)), std::string(store.font_name(m->text.font))});
         }
     });
 

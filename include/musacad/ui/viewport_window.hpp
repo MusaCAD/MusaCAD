@@ -330,7 +330,7 @@ public:
     /// about `a` by `param` radians, 4 scales about `a` by `param`; 0 clears.
     void set_dialog_ghost(int mode, core::Vec2 a, double param);
     /// The selection's drawn extents from the last snapshot (dialog defaults).
-    bool selection_bounds(core::Vec2& mn, core::Vec2& mx);
+    bool selection_bounds(core::Vec2& mn, core::Vec2& mx) override;
     void set_match_cursor(bool on) override;
 
 Q_SIGNALS:
@@ -448,7 +448,7 @@ public:
         return line_vertex_count_.load(std::memory_order_relaxed);
     }
     /// World AABB of the current geometry (for self-tests). Returns false if empty.
-    [[nodiscard]] bool content_bounds(core::Vec2& mn, core::Vec2& mx) const {
+    [[nodiscard]] bool content_bounds(core::Vec2& mn, core::Vec2& mx) const override {
         std::scoped_lock lock(grips_mutex_);
         mn = bounds_min_;
         mx = bounds_max_;
@@ -552,11 +552,19 @@ public:
     /// was hit (world), the pick aperture, the current content, and whether the
     /// editor should be multi-line. The host opens a (dark-themed) editor and, on
     /// confirm, submits an EditTextContentCommand at `at`.
+    int mtext_editor(core::Vec2 at, std::string& content, double height, const std::string& font) override {
+        return mtext_editor_callback_ ? mtext_editor_callback_(at, content, height, font) : -1;
+    }
+    void set_mtext_editor_callback(std::function<int(core::Vec2, std::string&, double, const std::string&)> cb) {
+        mtext_editor_callback_ = std::move(cb);
+    }
     struct TextEditRequest {
         render::Vec2 at;
         double pick_radius = 0.0;
         std::string content;
         bool multiline = false;
+        double height = 2.5;
+        std::string font;
     };
     void set_text_edit_callback(std::function<void(const TextEditRequest&)> cb) {
         text_edit_callback_ = std::move(cb);
@@ -649,7 +657,8 @@ public:
         out_max = camera_.visible_max();
     }
 
-    /// Project a world point to viewport-local (device-independent) pixels, for
+    [[nodiscard]] QPoint world_to_global(core::Vec2 world) const;
+    /// Project a world point to active-tile-local device pixels, for
     /// anchoring on-geometry overlays such as the Dynamic-Input field tooltips.
     [[nodiscard]] core::Vec2 world_to_screen_px(core::Vec2 world) {
         std::scoped_lock lock(camera_mutex_);
@@ -940,7 +949,7 @@ private:
     std::function<int(bool&, std::uint8_t&)> lineweight_dialog_callback_;
     std::function<void()> linetype_manager_callback_;
     /// The text or table cell nearest `world` within `pad` (what a double-click edits).
-    bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline);
+    bool text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline, double& height, std::string& font);
     void retry_edit_text(core::Vec2 at, int tries); ///< edit_text_soon's later tries
     std::function<void()> view_manager_callback_;
     std::function<void()> layer_states_callback_;
@@ -987,6 +996,7 @@ private:
     std::vector<core::GripInfo> grips_cache_;
     std::vector<core::TextEditTarget> text_targets_; // for double-click-to-edit (same mutex)
     std::vector<core::AttribEditTarget> attrib_targets_; // EATTEDIT / double-click (same mutex)
+    std::function<int(core::Vec2, std::string&, double, const std::string&)> mtext_editor_callback_;
     std::function<void(const TextEditRequest&)> text_edit_callback_;
     std::function<void(const AttribEditRequest&)> attribute_edit_callback_;
     std::function<void()> battman_callback_;

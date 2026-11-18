@@ -136,9 +136,10 @@ QtFontEngine::Face* QtFontEngine::face_for(std::string_view name) const {
         return it->second.cap > 0.0 ? &it->second : nullptr;
     }
     // Resolve the family: exact family match, else substitution, else give up (stroke).
-    QString family = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
+    const auto family_name = name.substr(0, name.find('|'));
+    QString family = QString::fromUtf8(family_name.data(), static_cast<int>(family_name.size()));
     if (!QFontDatabase::families().contains(family, Qt::CaseInsensitive)) {
-        const std::string sub = substitute(name);
+        const std::string sub = substitute(family_name);
         if (sub.empty()) {
             faces_[std::string(name)] = Face{QFont{}, -1.0, {}}; // negative cap = "unresolved"
             return nullptr;
@@ -146,6 +147,8 @@ QtFontEngine::Face* QtFontEngine::face_for(std::string_view name) const {
         family = QString::fromStdString(sub);
     }
     QFont f(family);
+    f.setBold(name.find("|b1") != std::string_view::npos);
+    f.setItalic(name.find("|i1") != std::string_view::npos);
     f.setPixelSize(static_cast<int>(kPixelSize));
     const QFontMetricsF fm(f);
     double cap = fm.capHeight();

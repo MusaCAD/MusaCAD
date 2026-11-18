@@ -1,4 +1,5 @@
 add_library(musacad_ui STATIC
+    mtext_editor.cpp
     main_window.cpp
     viewport_window.cpp
     command_line_widget.cpp

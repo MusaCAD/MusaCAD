@@ -121,6 +121,7 @@ public:
     /// Real-window self-test: create MTEXT (two corners + text) and QLEADER (arrow
     /// + vertices + text) via the command line; both render.
     bool selftest_mtext();
+    bool selftest_drafting();
     /// Real-window self-test: PR palette multiplicity (none/one/many-same/mixed),
     /// universal + text property edits via the panel, observed store change + undo.
     bool selftest_properties();
@@ -299,8 +300,9 @@ private:
 
     // Double-click text editor: a dark-themed modal editor pre-filled with the
     // entity's content; on confirm submits an EditTextContentCommand at (wx,wy).
+    int edit_mtext(core::Vec2 at, std::string& content, double height, const std::string& font);
     void open_text_editor(double wx, double wy, double pick_radius, const std::string& content,
-                          bool multiline);
+                          bool multiline, double height = 2.5, const std::string& font = {});
 
     // VPORTS: apply one of the standard tiled-viewport configurations to the whole model
     // window (the View tab's Viewport Configuration list); the current view is kept in

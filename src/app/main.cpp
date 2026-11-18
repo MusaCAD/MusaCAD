@@ -260,6 +260,11 @@ int main(int argc, char* argv[]) {
                 app.exit(window.selftest_updates() ? 0 : 1);
                 return;
             }
+            if (qEnvironmentVariable("MUSACAD_SELFTEST") == QLatin1String("drafting")) {
+                app.exit(window.selftest_drafting() ? 0 : 1);
+                return;
+            }
+            const bool ok_drafting = window.selftest_drafting();
             const bool ok_delete = window.selftest_delete();
             const bool ok_modify = window.selftest_modify();
             const bool ok_dialog = window.selftest_dialog();
@@ -282,7 +287,7 @@ int main(int argc, char* argv[]) {
             const bool ok = ok_delete && ok_modify && ok_dialog && ok_persist && ok_theme &&
                             ok_layers && ok_annotation && ok_grips && ok_mtext && ok_props &&
                             ok_linetype && ok_dimprops && ok_dyn && ok_pdlg && ok_dwg &&
-                            ok_cmds && ok_vports && ok_band && ok_updates;
+                            ok_cmds && ok_vports && ok_band && ok_updates && ok_drafting;
             std::printf("[selftest] overall: %s\n", ok ? "PASS" : "FAIL");
             app.exit(ok ? 0 : 1);
         });

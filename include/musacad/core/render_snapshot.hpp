@@ -171,6 +171,7 @@ struct TextEditTarget {
     double rotation = 0.0;
     bool multiline = false;
     std::string content;
+    std::string font;
 };
 
 /// A block reference that carries attributes, surfaced so the UI can open the attribute
@@ -325,6 +326,9 @@ struct RenderSnapshot {
     // Interaction state, not part of the checksum.
     std::vector<EntityHandle> selection;
     std::vector<SelectedDim> selected_dims; ///< the dimensions among them
+    Vec2 selection_min{};
+    Vec2 selection_max{};
+    bool has_selection_bounds = false;
     Vec2 selection_size{}; ///< the selection's extents, width and height
     std::vector<Vec2> selected_line_vertices;
     // Filled (SOLID hatch) triangles of the selection, overlaid in the highlight
@@ -497,6 +501,9 @@ struct RenderSnapshot {
         selection.clear();
         selected_dims.clear();
         selection_size = {};
+        selection_min = {};
+        selection_max = {};
+        has_selection_bounds = false;
         selected_line_vertices.clear();
         selected_fill_vertices.clear();
         hover = EntityHandle{};

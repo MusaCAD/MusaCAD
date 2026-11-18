@@ -278,6 +278,18 @@ public:
     virtual ~ViewControl() = default;
     virtual void zoom_extents() = 0;
     virtual void zoom_scale(double factor) = 0;
+    /// Finite drawing / selection extents in world coordinates.
+    virtual bool content_bounds(core::Vec2& min, core::Vec2& max) const {
+        (void)min;
+        (void)max;
+        return false;
+    }
+    virtual bool selection_bounds(core::Vec2& min, core::Vec2& max) {
+        (void)min;
+        (void)max;
+        return false;
+    }
+
     /// VIEW: the current camera (world centre, pixels per drawing unit) and the
     /// viewport size in pixels. Defaults say "unavailable" for headless hosts.
     [[nodiscard]] virtual bool current_view(core::Vec2& center, double& scale) {
@@ -401,6 +413,11 @@ public:
     /// cancelled, -1 = no window here (the command line asks).
     virtual int insert_table_dialog(InsertTableSettings& io) {
         (void)io;
+        return -1;
+    }
+    /// MTEXT's floating editor: 1 accepted, 0 cancelled, -1 command-line host.
+    virtual int mtext_editor(core::Vec2 at, std::string& content, double height, const std::string& font) {
+        (void)at; (void)content; (void)height; (void)font;
         return -1;
     }
     /// TABLEEDIT: the text editor on the table cell (or text) at `at`, as a double-click
