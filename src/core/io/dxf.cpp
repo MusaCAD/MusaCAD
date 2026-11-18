@@ -3657,9 +3657,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 dt = DimType::Linear;
                 break;
             }
-            // A rotated dimension's line angle (50); without one, the axis its points
-            // differ most on (what this reader always did, and what older files mean).
-            if (dt == DimType::Linear && find(body, 50) != nullptr) {
+            // Group 50 defaults to zero for a rotated linear dimension. An omitted
+            // angle still means horizontal; the max-delta fallback belongs to old
+            // native drawings whose axis was not recorded.
+            if (dt == DimType::Linear) {
                 d.aux = linear_dim_aux(to_radians(getd(body, 50)));
             }
             // Radius/diameter in the old layout: the text's place in 15.
