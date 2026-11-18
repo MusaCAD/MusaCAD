@@ -46,6 +46,13 @@ musacad_enable_sanitizers(musacad_plot_check)
 set_target_properties(musacad_plot_check PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# Visual MTEXT editing / lossless source and font-face regression checks.
+add_executable(musacad_text_editor_check text_editor_check.cpp)
+target_link_libraries(musacad_text_editor_check PRIVATE musacad::ui)
+musacad_enable_sanitizers(musacad_text_editor_check)
+set_target_properties(musacad_text_editor_check PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # Branding raster generator: SVG -> PNGs via Qt (assets/branding/regen_icons.sh drives it).
 add_executable(musacad_svg2png ${CMAKE_CURRENT_SOURCE_DIR}/../tools/svg2png.cpp)
 target_link_libraries(musacad_svg2png PRIVATE Qt6::Gui)
@@ -236,6 +243,7 @@ set(_musacad_test_files
     test_layer_states_grid.cpp
     test_dim_units.cpp
     test_mleader.cpp
+    test_zoom.cpp
     test_find_text.cpp
     test_pedit_vertex.cpp
     test_dwgunits.cpp

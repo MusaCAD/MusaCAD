@@ -206,8 +206,10 @@ void ViewportWindow::set_view(core::Vec2 center, double scale) {
 }
 
 bool ViewportWindow::viewport_size(int& w, int& h) const {
-    w = width();
-    h = height();
+    // Use the active tile's device pixels, matching the units of camera scale.
+    std::scoped_lock lock(camera_mutex_);
+    w = camera_.viewport_width();
+    h = camera_.viewport_height();
     return w > 0 && h > 0;
 }
 
@@ -511,7 +513,7 @@ bool ViewportWindow::publish() {
     return true;
 }
 
-bool ViewportWindow::text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline) {
+bool ViewportWindow::text_target_at(core::Vec2 world, double pad, std::string& content, bool& multiline, double& height, std::string& font) {
     std::scoped_lock lock(grips_mutex_);
     bool found = false;
     double best = 0.0;
@@ -527,6 +529,8 @@ bool ViewportWindow::text_target_at(core::Vec2 world, double pad, std::string& c
             best = d2;
             content = t.content;
             multiline = t.multiline;
+            height = t.height;
+            font = t.font;
         }
     }
     return found;
@@ -544,10 +548,12 @@ bool ViewportWindow::edit_text_at(core::Vec2 at) {
     const double pad = pick_aperture(devicePixelRatio(), scale);
     std::string content;
     bool multiline = false;
-    if (!text_target_at(at, pad, content, multiline)) {
+    double height = 2.5;
+    std::string font;
+    if (!text_target_at(at, pad, content, multiline, height, font)) {
         return false;
     }
-    text_edit_callback_(TextEditRequest{at, pad, content, multiline});
+    text_edit_callback_(TextEditRequest{at, pad, content, multiline, height, font});
     return true;
 }
 
@@ -1274,6 +1280,15 @@ void ViewportWindow::active_tile_rect(int w, int h, double& x, double& top, doub
     th = std::max(1.0, std::floor((1.0 - t.y0) * h) - top);
 }
 
+QPoint ViewportWindow::world_to_global(core::Vec2 world) const {
+    std::scoped_lock lock(camera_mutex_);
+    double x = 0, y = 0, w = 0, h = 0;
+    active_tile_rect(fb_width_.load(), fb_height_.load(), x, y, w, h);
+    const core::Vec2 px = camera_.world_to_screen(world);
+    const double dpr = devicePixelRatio();
+    return mapToGlobal(QPoint(qRound((px.x + x) / dpr), qRound((px.y + y) / dpr)));
+}
+
 core::Vec2 ViewportWindow::local_px(QPointF pos, double dpr) const {
     core::Vec2 p{pos.x() * dpr, pos.y() * dpr};
     if (!tiles_split_.load(std::memory_order_relaxed)) {
@@ -1834,14 +1849,9 @@ bool ViewportWindow::render_frame(RenderSession& state) {
         text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
         attrib_targets_ = snap.attrib_edit_targets; // EATTEDIT / double-click
         selection_summary_ = snap.selection_summary; // PR palette
-        has_sel_bounds_ = !snap.selected_line_vertices.empty();
-        if (has_sel_bounds_) {
-            sel_bounds_min_ = sel_bounds_max_ = snap.selected_line_vertices.front();
-            for (const core::Vec2& p : snap.selected_line_vertices) {
-                sel_bounds_min_ = {std::min(sel_bounds_min_.x, p.x), std::min(sel_bounds_min_.y, p.y)};
-                sel_bounds_max_ = {std::max(sel_bounds_max_.x, p.x), std::max(sel_bounds_max_.y, p.y)};
-            }
-        }
+        has_sel_bounds_ = snap.has_selection_bounds;
+        sel_bounds_min_ = snap.selection_min;
+        sel_bounds_max_ = snap.selection_max;
         bounds_min_ = snap.bounds_min;
         bounds_max_ = snap.bounds_max;
         has_bounds_ = snap.has_bounds;
@@ -2396,9 +2406,11 @@ void ViewportWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     const double pad = pick_aperture(dpr, scale); // pick aperture in world units (DPR-aware)
     std::string content;
     bool multiline = false;
+    double height = 2.5;
+    std::string font;
     // Open the editor OUTSIDE the lock (it runs a modal dialog).
-    if (text_target_at(world, pad, content, multiline)) {
-        text_edit_callback_(TextEditRequest{world, pad, content, multiline});
+    if (text_target_at(world, pad, content, multiline, height, font)) {
+        text_edit_callback_(TextEditRequest{world, pad, content, multiline, height, font});
         return;
     }
     // A block reference with attributes: the attribute editor (AutoCAD's double-click).

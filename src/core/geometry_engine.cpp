@@ -22934,6 +22934,9 @@ void GeometryEngine::rebuild_and_publish() {
         }
         // The selection's extents' size (the default spacing of a rectangular array).
         buf.selection_size = {};
+        buf.has_selection_bounds = false;
+        buf.selection_min = {};
+        buf.selection_max = {};
         {
             bool any = false;
             Vec2 lo;
@@ -22949,6 +22952,9 @@ void GeometryEngine::rebuild_and_publish() {
             }
             if (any) {
                 buf.selection_size = hi - lo;
+                buf.selection_min = lo;
+                buf.selection_max = hi;
+                buf.has_selection_bounds = true;
             }
         }
         buf.selection_summary = sel_cache_summary_;

@@ -51,6 +51,37 @@ jobs:
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Install and verify NSIS
+        shell: pwsh
+        run: |
+          $findNsis = {
+            $candidates = @(
+              "$env:ProgramFiles\NSIS\makensis.exe",
+              "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+            )
+            $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+            if ($command) { $candidates += $command.Source }
+            foreach ($candidate in $candidates) {
+              if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            }
+            return $null
+          }
+          $nsis = & $findNsis
+          for ($attempt = 1; -not $nsis -and $attempt -le 3; $attempt++) {
+            try {
+              choco install nsis -y --no-progress --limit-output
+            } catch {
+              Write-Warning "NSIS installation attempt $attempt failed: $_"
+            }
+            # Chocolatey can return success after a feed timeout without installing anything.
+            $nsis = & $findNsis
+            if (-not $nsis -and $attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
+          }
+          if (-not $nsis) { throw "NSIS was not installed after three attempts." }
+          & $nsis /VERSION
+          if ($LASTEXITCODE -ne 0) { throw "NSIS compiler verification failed." }
+          "NSIS_EXE=$nsis" >> $env:GITHUB_ENV
+
       - name: Configure (Release, Ninja)
         shell: cmd
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF -DMUSACAD_MSVC_WERROR=ON
@@ -74,17 +105,13 @@ jobs:
           rem and windeployqt bundles only qwindows by itself -- without it the installed
           rem `musacad --plot` cannot start.
 
-      - name: Install NSIS
-        shell: cmd
-        run: choco install nsis -y --no-progress
-
       - name: Package with NSIS
-        shell: cmd
-        run: >
-          "C:\Program Files (x86)\NSIS\makensis.exe" /NOCD
-          /DVERSION=${{ steps.ver.outputs.version }}
-          /DSTAGING=staging
-          packaging\windows\musacad.nsi
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          & $env:NSIS_EXE /NOCD "/DVERSION=$env:PACKAGE_VERSION" /DSTAGING=staging packaging\windows\musacad.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Checksum
         shell: bash

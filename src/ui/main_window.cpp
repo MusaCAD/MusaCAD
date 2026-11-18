@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include "musacad/ui/main_window.hpp"
+#include "musacad/ui/mtext_editor.hpp"
+#include "musacad/core/text/mtext.hpp"
+#include <QTextCursor>
 
 #include "musacad/core/threading/jthread.hpp"
 
@@ -90,6 +93,7 @@
 #include <QMenu>
 #include <QPalette>
 #include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QStatusBar>
@@ -278,7 +282,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     viewport_->set_processor(processor_.get());
     viewport_->set_font_engine(ui_font_engine_.get()); // TTF for the on-canvas command UI
     viewport_->set_text_edit_callback([this](const ViewportWindow::TextEditRequest& req) {
-        open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline);
+        open_text_editor(req.at.x, req.at.y, req.pick_radius, req.content, req.multiline, req.height, req.font);
+    });
+    viewport_->set_mtext_editor_callback([this](core::Vec2 at, std::string& content, double height, const std::string& font) {
+        return edit_mtext(at, content, height, font);
     });
     viewport_->set_attribute_edit_callback(
         [this](const ViewportWindow::AttribEditRequest& req) {
@@ -1516,6 +1523,13 @@ void MainWindow::dump_ui() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // A modal editor owns every key, including when a toolbar button has focus.
+    // Routing Escape to the drawing here could destroy the command whose editor
+    // is still running inside its input handler.
+    if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) &&
+        QApplication::activeModalWidget() != nullptr) {
+        return QMainWindow::eventFilter(watched, event);
+    }
     // The layer combo's list: a click on a state icon switches the layer on or off, freezes
     // or thaws it, locks or unlocks it, in place, the list staying open.
     // The mouse first: view() makes the list when there is none yet, and the events of its
@@ -1570,7 +1584,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                             (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
         const bool in_text_input = !in_cmd && !in_dyn &&
                                    (qobject_cast<QLineEdit*>(fw) != nullptr ||
-                                    qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+                                    qobject_cast<QPlainTextEdit*>(fw) != nullptr || qobject_cast<QTextEdit*>(fw) != nullptr);
         if (!in_props && !in_text_input &&
             viewport_->override_key(ke->key(), ke->modifiers(), event->type() == QEvent::KeyPress,
                                     ke->isAutoRepeat())) {
@@ -1626,7 +1640,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                                     (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
                 const bool in_text_input = !in_cmd && !in_dyn &&
                                            (qobject_cast<QLineEdit*>(fw) != nullptr ||
-                                            qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+                                            qobject_cast<QPlainTextEdit*>(fw) != nullptr || qobject_cast<QTextEdit*>(fw) != nullptr);
                 if (!in_props && !in_text_input) {
                     if (k == Qt::Key_Escape) {
                         viewport_->handle_escape(); // grip-cancel or processor->cancel()
@@ -1663,7 +1677,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
                                   properties_dock_->isAncestorOf(fw);
             const bool in_text_input = qobject_cast<QLineEdit*>(fw) != nullptr ||
-                                       qobject_cast<QPlainTextEdit*>(fw) != nullptr;
+                                       qobject_cast<QPlainTextEdit*>(fw) != nullptr || qobject_cast<QTextEdit*>(fw) != nullptr;
             if (!in_props && !in_text_input &&
                 viewport_->sub_prompt_handle_key(ke->key(), ke->text())) {
                 return true;
@@ -1697,7 +1711,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
                                 (fw == static_cast<QWidget*>(dyn_) || dyn_->isAncestorOf(fw));
             const bool in_text_input = !in_cmd && !in_dyn &&
                                        (qobject_cast<QLineEdit*>(fw) != nullptr ||
-                                        qobject_cast<QPlainTextEdit*>(fw) != nullptr);
+                                        qobject_cast<QPlainTextEdit*>(fw) != nullptr || qobject_cast<QTextEdit*>(fw) != nullptr);
             const bool in_properties = properties_dock_ != nullptr && fw != nullptr &&
                                        properties_dock_->isAncestorOf(fw);
             if (!typing && !dyn_typing && !canvas_typing && !in_text_input && !in_properties &&
@@ -6963,6 +6977,125 @@ bool MainWindow::selftest_grips() {
     return all;
 }
 
+bool MainWindow::selftest_drafting() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1500; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    bool all = true;
+    const bool saved_dyn = dyn_action_->isChecked();
+    dyn_action_->setChecked(true);
+    const auto check = [&](bool ok, const char* label) {
+        std::printf("[selftest] drafting %s: %s\n", label, ok ? "PASS" : "FAIL");
+        all = all && ok;
+    };
+    processor_->cancel();
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    engine_->submit(core::AddLineCommand{{10, 20}, {110, 70}, processor_->begin_group()});
+    pump([this] { return viewport_->line_vertex_count() == 2; });
+    processor_->submit_line("SELECT");
+    processor_->submit_line("ALL");
+    pump([this] { return viewport_->selection_count() == 1; });
+    processor_->submit_line("");
+    // The command uses the same finite entity extents as the engine, even for fills.
+    processor_->set_selection_count(1);
+    processor_->start_macro("Z", {"O"});
+    core::Vec2 center;
+    double scale = 0;
+    int w = 0, h = 0;
+    viewport_->viewport_size(w, h);
+    const double fit = std::min(w / 100.0, h / 50.0) / 1.1;
+    check(pump([&] { return viewport_->current_view(center, scale) &&
+                           core::distance(center, {60, 45}) < 1e-6 && std::abs(scale - fit) < 1e-6; }),
+          "Zoom Object centres and fits selection at device scale");
+    processor_->start_macro("Z", {"W", "0,0", "100,50"});
+    const double window_fit = std::min(w / 100.0, h / 50.0);
+    check(pump([&] { return viewport_->current_view(center, scale) &&
+                           core::distance(center, {50, 25}) < 1e-6 && std::abs(scale - window_fit) < 1e-6; }),
+          "Zoom Window uses device pixels");
+    processor_->start_macro("Z", {"P"});
+    check(pump([&] { return viewport_->current_view(center, scale) &&
+                           core::distance(center, {60, 45}) < 1e-6 && std::abs(scale - fit) < 1e-6; }),
+          "Zoom Previous restores the object view");
+    engine_->submit(core::NewDocumentCommand{});
+    pump([this] { return viewport_->line_vertex_count() == 0; });
+    bool editor_seen = false;
+    QTimer::singleShot(100, this, [&] {
+        auto* dlg = dynamic_cast<MTextEditor*>(QApplication::activeModalWidget());
+        if (!dlg) return;
+        editor_seen = true;
+        dlg->editor()->insertPlainText(QStringLiteral("Draft note"));
+        dlg->editor()->selectAll();
+        dlg->findChild<QAction*>(QStringLiteral("MTextUnderline"))->trigger();
+        dlg->editor()->moveCursor(QTextCursor::End);
+        dlg->editor()->insertPlainText(QStringLiteral("\nSecond line"));
+        const QString shot = qEnvironmentVariable("MUSACAD_DRAFTING_SHOT");
+        if (!shot.isEmpty()) dlg->grab().save(shot);
+        dlg->accept();
+    });
+    processor_->submit_line("MTEXT");
+    processor_->submit_line("0,0");
+    processor_->submit_line("100,-40");
+    check(editor_seen && pump([this] { return viewport_->text_contents().size() == 1; }),
+          "MTEXT opens the visual editor after the second corner");
+    const auto contents = viewport_->text_contents();
+    if (!contents.empty()) {
+        const std::string original = contents.front();
+        check(core::text::mtext_plain(original) == "Draft note\nSecond line" && original.find("\\L") != std::string::npos,
+              "formatted multiline content reaches the drawing");
+        QTimer::singleShot(100, this, [] {
+            auto* dlg = dynamic_cast<MTextEditor*>(QApplication::activeModalWidget());
+            if (!dlg) return;
+            dlg->editor()->selectAll();
+            QKeyEvent erase(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+            QApplication::sendEvent(dlg->editor(), &erase);
+            dlg->editor()->insertPlainText(QStringLiteral("Cancelled"));
+            dlg->reject();
+        });
+        open_text_editor(0, -1, 2, original, true);
+        check(viewport_->text_contents() == contents, "cancel leaves the drawing unchanged");
+        QTimer::singleShot(100, this, [] {
+            auto* dlg = dynamic_cast<MTextEditor*>(QApplication::activeModalWidget());
+            if (!dlg) return;
+            dlg->editor()->selectAll();
+            dlg->editor()->insertPlainText(QStringLiteral("Revised"));
+            dlg->accept();
+        });
+        open_text_editor(0, -1, 2, original, true);
+        check(pump([this] {
+            const auto values = viewport_->text_contents();
+            return values.size() == 1 && core::text::mtext_plain(values.front()) == "Revised";
+        }), "editing existing MTEXT commits the replacement");
+        processor_->submit_line("U");
+        check(pump([&] { return viewport_->text_contents() == contents; }), "one undo restores original formatted text");
+    }
+    // Cancelled creation must not leave an empty object or an active command.
+    bool command_survived_escape = false;
+    QTimer::singleShot(100, this, [&] {
+        if (auto* dlg = QApplication::activeModalWidget()) {
+            auto* button = dlg->findChild<QPushButton*>(QStringLiteral("MTextCancel"));
+            button->setFocus();
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(button, &escape);
+            command_survived_escape = processor_->has_active_command();
+        }
+    });
+    processor_->submit_line("MTEXT");
+    processor_->submit_line("200,0");
+    processor_->submit_line("300,-40");
+    check(command_survived_escape && !processor_->has_active_command() && viewport_->text_contents().size() == contents.size(),
+          "Escape from an editor button safely cancels creation");
+    engine_->submit(core::NewDocumentCommand{});
+    dyn_action_->setChecked(saved_dyn);
+    command_widget_->focus_input();
+    return all;
+}
+
 bool MainWindow::selftest_mtext() {
     const auto pump = [](auto pred) {
         for (int i = 0; i < 1200; ++i) {
@@ -6981,10 +7114,11 @@ bool MainWindow::selftest_mtext() {
     pump([this] { return viewport_->line_vertex_count() == 0; });
 
     // MTEXT: two corners (insertion + wrap width) then a paragraph that wraps.
-    type("MT");
+    type("-MTEXT");
     type("0,0");
     type("40,-20");
     type("ALPHA BETA GAMMA DELTA EPSILON ZETA");
+    type("");
     const bool mtext_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
     std::printf("[selftest] MTEXT command renders (wrapped paragraph): %s\n",
                 mtext_ok ? "PASS" : "FAIL");
@@ -10286,42 +10420,39 @@ bool MainWindow::selftest_dwg() {
     return all;
 }
 
+int MainWindow::edit_mtext(core::Vec2 at, std::string& content, double height, const std::string& font) {
+    MTextEditor editor(QString::fromStdString(content), height, QString::fromStdString(font), this);
+    QPoint pos = viewport_->world_to_global(at);
+    const QRect available = screen()->availableGeometry();
+    pos.setX(std::clamp(pos.x(), available.left(), std::max(available.left(), available.right() - editor.width())));
+    pos.setY(std::clamp(pos.y(), available.top(), std::max(available.top(), available.bottom() - editor.height())));
+    editor.move(pos);
+    if (editor.exec() != QDialog::Accepted) return 0;
+    content = editor.text().toStdString();
+    return 1;
+}
+
 void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
-                                  const std::string& content, bool multiline) {
-    // A small modal editor (popup; an in-canvas overlay is awkward over a QWindow
-    // OpenGL surface). Themed by the app-wide Fusion + dark palette (Ph11), so no
-    // light native widget. Multi-line for MTEXT/QLEADER, single-line for TEXT.
-    QDialog dlg(this);
-    dlg.setWindowTitle(multiline ? QStringLiteral("Edit MText") : QStringLiteral("Edit Text"));
-    auto* layout = new QVBoxLayout(&dlg);
-    const QString initial = QString::fromStdString(content);
-    QPlainTextEdit* multi = nullptr;
-    QLineEdit* single = nullptr;
+                                  const std::string& content, bool multiline, double height, const std::string& font) {
+    std::string updated = content;
     if (multiline) {
-        multi = new QPlainTextEdit(initial, &dlg);
-        layout->addWidget(multi);
-        dlg.resize(360, 180);
+        if (edit_mtext({wx, wy}, updated, height, font) != 1) return;
     } else {
-        single = new QLineEdit(initial, &dlg);
+        QDialog dlg(this);
+        dlg.setWindowTitle(QStringLiteral("Edit Text"));
+        auto* layout = new QVBoxLayout(&dlg);
+        auto* single = new QLineEdit(QString::fromStdString(content), &dlg);
         single->selectAll();
         layout->addWidget(single);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        connect(single, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+        if (dlg.exec() != QDialog::Accepted) return;
+        updated = single->text().toStdString();
     }
-    auto* buttons =
-        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    layout->addWidget(buttons);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    // For single-line, Enter confirms (QLineEdit returnPressed) -- AutoCAD feel.
-    if (single != nullptr) {
-        QObject::connect(single, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
-    }
-
-    if (dlg.exec() != QDialog::Accepted) {
-        return; // Esc / Cancel -> no change
-    }
-    const std::string updated =
-        multiline ? multi->toPlainText().toStdString() : single->text().toStdString();
-    // One undo group; the engine changes only the content (layer/props/pos kept).
+    if (updated == content) return;
     engine_->submit(core::EditTextContentCommand{
         {wx, wy}, pick_radius, updated, processor_->begin_group()});
 }

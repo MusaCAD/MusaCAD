@@ -261,6 +261,9 @@ std::vector<Item> parse_codes(std::string_view raw, double base_height) {
                 if (dot != std::string::npos) {
                     name.erase(dot); // romans.shx, arial.ttf: by its name
                 }
+                // Keep the TrueType face flags with the family for the font engine.
+                if (a.find("|b1") != std::string::npos) name += "|b1";
+                if (a.find("|i1") != std::string::npos) name += "|i1";
                 s.font = name;
             } // \A, \p: read and passed over
             break;

@@ -8,6 +8,14 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 
 ## Unreleased
 
+### Added
+- A floating multiline text editor opens after MTEXT's corners and when editing existing
+  multiline text. Font, height, bold, italic, underline, overline, strikethrough, color and
+  symbols apply to selected characters. Ctrl+Enter saves; Esc cancels. Unsupported
+  formatting remains editable as source without removing its codes (#43).
+- Zoom Object fits selected entities, or prompts for a selection. The ribbon and navigation
+  bar include Zoom Object, Window and Previous (#72).
+
 ### Changed
 - Available updates appear as a small icon beside command search. The tooltip names the
   new version; clicking opens update details. Current and skipped versions stay hidden.
@@ -15,6 +23,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   compiler timestamp, which reproducible Flatpak builds replace with a fixed date.
 
 ### Fixed
+- Zoom All includes the drawing limits and visible geometry. Ribbon Extents preserves
+  view history, and window/center zoom calculations use device pixels on HiDPI displays (#72).
+- Bold and italic TrueType flags in multiline text select the corresponding font faces (#43).
 - Rotated linear dimensions imported from DXF use the default horizontal angle when
   group 50 is absent, preserving the correct measurement (#99).
 - Dimension text with line breaks or literal backslashes survives saving and reopening,

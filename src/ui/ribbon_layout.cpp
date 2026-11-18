@@ -1117,22 +1117,26 @@ void MainWindow::build_ribbon() {
         auto* zoom_menu = new QMenu(this);
         QAction* ze = zoom_menu->addAction(asset("zoom-extents"), QStringLiteral("Zoom Extents"));
         tag(ze, "Z", {"E"});
-        connect(ze, &QAction::triggered, this, [this] { viewport_->zoom_extents(); });
+        connect(ze, &QAction::triggered, this, [this] { processor_->start_macro("Z", {"E"}); });
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Window"), "Z", {"W"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Object"), "Z", {"O"}));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Previous"), "Z", {"P"}));
+        zoom_menu->addSeparator();
         zoom_menu->addAction(macro(QStringLiteral("Zoom All"), "Z", {"A"}));
         zoom_menu->addAction(macro(QStringLiteral("Zoom In"), "Z", {"2x"}));
         zoom_menu->addAction(macro(QStringLiteral("Zoom Out"), "Z", {"0.5x"}));
-        zoom_menu->addAction(action("Z", QStringLiteral("Zoom Scale")));
+        zoom_menu->addAction(macro(QStringLiteral("Zoom Scale"), "Z", {"S"}));
         QToolButton* zoom = nav->add_dropdown(asset("zoom"), QStringLiteral("Zoom"), zoom_menu, /*split=*/true, RibbonTier::Primary);
         zoom->setObjectName(QStringLiteral("ribbon.cmd.Z"));
         tag(zoom, "Z");
         zoom->setToolTip(QStringLiteral("<b>ZOOM (Z)</b><br>Zoom in or out to change the view magnification."));
-        connect(zoom, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
+        connect(zoom, &QToolButton::clicked, this, [this] { processor_->start_macro("Z", {"E"}); });
         QWidget* col = nav->add_column();
         QToolButton* zext = nav->add_small(col, asset("zoom-extents"), QStringLiteral("Zoom Extents"));
         zext->setObjectName(QStringLiteral("ribbon.zoom_extents"));
         tag(zext, "Z", {"E"});
         zext->setToolTip(QStringLiteral("Zoom to show the full drawing extents."));
-        connect(zext, &QToolButton::clicked, this, [this] { viewport_->zoom_extents(); });
+        connect(zext, &QToolButton::clicked, this, [this] { processor_->start_macro("Z", {"E"}); });
         small(nav, col, QStringLiteral("Pan"), "P", "pan");
     }
     // --- Viewport Tools: the navigation bar shown or hidden (the UCS icon and the ViewCube
@@ -1155,11 +1159,12 @@ void MainWindow::build_ribbon() {
             command_widget_->focus_input();
             processor_->start_command("P");
         });
-        nav_action("zoom-extents", QStringLiteral("Zoom Extents"), [this] { viewport_->zoom_extents(); });
+        nav_action("zoom-extents", QStringLiteral("Zoom Extents"), [this] { processor_->start_macro("Z", {"E"}); });
         nav_action("zoom", QStringLiteral("Zoom Window"), [this] {
             command_widget_->focus_input();
             processor_->start_macro("Z", {"W"});
         });
+        nav_action("zoom", QStringLiteral("Zoom Object"), [this] { processor_->start_macro("Z", {"O"}); });
         nav_action("zoom", QStringLiteral("Zoom Previous"), [this] { processor_->start_macro("Z", {"P"}); });
         nav_action("zoom", QStringLiteral("Zoom In"), [this] { processor_->start_macro("Z", {"2x"}); });
         nav_action("zoom", QStringLiteral("Zoom Out"), [this] { processor_->start_macro("Z", {"0.5x"}); });

@@ -304,7 +304,17 @@ public:
     static void remember_view(CommandContext& ctx);
 
 private:
-    enum class Step : std::uint8_t { Main, WindowFirst, WindowSecond, Center, CenterSize, Scale };
+    enum class Step : std::uint8_t { Main, WindowFirst, WindowSecond, Center, CenterSize, Scale, Objects };
+    void zoom_objects(CommandContext& ctx);
+    bool frame_bounds(CommandContext& ctx, core::Vec2 min, core::Vec2 max);
+    SelectObjectsPhase select_;
+
+public:
+    bool in_selection_phase() const override { return !done_ && step_ == Step::Objects; }
+    bool selection_removing() const override { return select_.removing(); }
+    void selection_gesture(CommandContext& ctx) override;
+
+private:
     bool apply_scale(CommandContext& ctx, const std::string& u);
     Step step_ = Step::Main;
     core::Vec2 corner_{};

@@ -1876,6 +1876,46 @@ bool ZoomCommand::apply_scale(CommandContext& ctx, const std::string& u0) {
     return true;
 }
 
+bool ZoomCommand::frame_bounds(CommandContext& ctx, core::Vec2 min, core::Vec2 max) {
+    auto* view = ctx.view();
+    int w = 0;
+    int h = 0;
+    if (!view || !view->viewport_size(w, h) || w <= 0 || h <= 0) {
+        return false;
+    }
+    const core::Vec2 size = max - min;
+    if (!std::isfinite(size.x) || !std::isfinite(size.y) || size.x < 0 || size.y < 0) {
+        return false;
+    }
+    core::Vec2 center;
+    double scale = 1.0;
+    (void)view->current_view(center, scale);
+    // A point is centred without magnifying it to the camera's maximum scale.
+    if (size.x > 1e-12 || size.y > 1e-12) {
+        scale = std::min(w / std::max(size.x, 1e-12), h / std::max(size.y, 1e-12)) / 1.1;
+    }
+    remember_view(ctx);
+    view->set_view((min + max) * 0.5, scale);
+    return true;
+}
+
+void ZoomCommand::zoom_objects(CommandContext& ctx) {
+    core::Vec2 min;
+    core::Vec2 max;
+    if (ctx.has_selection() && ctx.view() && ctx.view()->selection_bounds(min, max)) {
+        frame_bounds(ctx, min, max);
+    } else if (ctx.has_selection()) {
+        ctx.echo("The selection has no finite extents to zoom to.");
+    }
+    done_ = true;
+}
+
+void ZoomCommand::selection_gesture(CommandContext& ctx) {
+    if (step_ == Step::Objects && select_.gesture(ctx) == SelectObjectsPhase::Result::Done) {
+        zoom_objects(ctx);
+    }
+}
+
 void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     const std::string u = upper(t);
@@ -1886,7 +1926,19 @@ void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
             done_ = true; // real time: the wheel and a drag do it
             return;
         }
-        if (u == "E" || u == "EXTENTS" || u == "A" || u == "ALL") {
+        if (u == "A" || u == "ALL") {
+            auto limits = ctx.limits();
+            core::Vec2 min;
+            core::Vec2 max;
+            if (v && v->content_bounds(min, max)) {
+                limits.min = {std::min(limits.min.x, min.x), std::min(limits.min.y, min.y)};
+                limits.max = {std::max(limits.max.x, max.x), std::max(limits.max.y, max.y)};
+            }
+            frame_bounds(ctx, limits.min, limits.max);
+            done_ = true;
+            return;
+        }
+        if (u == "E" || u == "EXTENTS") {
             remember_view(ctx);
             if (v != nullptr) {
                 v->zoom_extents();
@@ -1908,11 +1960,18 @@ void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
             done_ = true;
             return;
         }
-        if (u == "W" || u == "WINDOW" || u == "D" || u == "DYNAMIC" || u == "O" || u == "OBJECT") {
+        if (u == "O" || u == "OBJECT") {
+            if (ctx.has_selection()) {
+                zoom_objects(ctx);
+            } else {
+                step_ = Step::Objects;
+                select_.begin(ctx);
+            }
+            return;
+        }
+        if (u == "W" || u == "WINDOW" || u == "D" || u == "DYNAMIC") {
             if (u[0] == 'D') {
                 ctx.echo("Dynamic zoom is not available; specify a window.");
-            } else if (u[0] == 'O') {
-                ctx.echo("Zoom Object is not available yet; specify a window.");
             }
             step_ = Step::WindowFirst;
             ctx.set_prompt("Specify first corner: ");
@@ -1939,6 +1998,11 @@ void ZoomCommand::input(CommandContext& ctx, const std::string& text) {
         }
         if (!apply_scale(ctx, u)) {
             ctx.echo("Requires a point, a scale factor (nX or nXP), or an option keyword.");
+        }
+        return;
+    case Step::Objects:
+        if (!select_.active() || select_.input(ctx, text) == SelectObjectsPhase::Result::Done) {
+            zoom_objects(ctx);
         }
         return;
     case Step::WindowFirst:
@@ -2056,6 +2120,7 @@ void PanCommand::cancel(CommandContext& ctx) {
 }
 
 void ZoomCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
     ctx.echo("*Cancel*");
     done_ = true;
 }
@@ -17104,6 +17169,15 @@ void MTextCommand::place(CommandContext& ctx, core::Vec2 other) {
     state_ = State::Content;
     ctx.clear_preview();
     ctx.set_prompt(typed_ ? "MText: " : "Enter text: ");
+    if (!typed_ && ctx.view()) {
+        std::string content;
+        const int result = ctx.view()->mtext_editor(pos_, content, height_, font_);
+        if (result == 0 || (result == 1 && content.empty())) {
+            done_ = true;
+        } else if (result == 1) {
+            input(ctx, content);
+        }
+    }
 }
 
 void MTextCommand::input(CommandContext& ctx, const std::string& text) {
