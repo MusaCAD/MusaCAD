@@ -32,7 +32,7 @@ GLuint compile_shader(GlFns* gl, GLenum type, const char* src) {
 // ----------------------------------------------------------------------------
 
 GlBuffer::GlBuffer(GlFns* gl, BufferUsage usage) : gl_(gl), usage_(to_gl_usage(usage)) {
-    gl_->glCreateBuffers(1, &id_);
+    gl_->glGenBuffers(1, &id_);
 }
 
 GlBuffer::~GlBuffer() {
@@ -49,11 +49,13 @@ void GlBuffer::upload(const void* data, std::size_t bytes) {
     // the store instead lets the driver orphan the busy allocation and hand back a
     // fresh one (the canonical streaming idiom). Scene buffers change rarely and keep
     // the in-place update, which avoids reallocating megabytes on every edit.
+    // COPY_WRITE_BUFFER keeps uploads independent of the currently bound VAO.
+    gl_->glBindBuffer(GL_COPY_WRITE_BUFFER, id_);
     if (bytes > capacity_ || usage_ == GL_STREAM_DRAW) {
-        gl_->glNamedBufferData(id_, static_cast<GLsizeiptr>(bytes), data, usage_);
+        gl_->glBufferData(GL_COPY_WRITE_BUFFER, static_cast<GLsizeiptr>(bytes), data, usage_);
         capacity_ = bytes;
     } else if (bytes > 0) {
-        gl_->glNamedBufferSubData(id_, 0, static_cast<GLsizeiptr>(bytes), data);
+        gl_->glBufferSubData(GL_COPY_WRITE_BUFFER, 0, static_cast<GLsizeiptr>(bytes), data);
     }
     size_ = bytes;
 }
@@ -63,7 +65,7 @@ void GlBuffer::upload(const void* data, std::size_t bytes) {
 // ----------------------------------------------------------------------------
 
 GlPipeline::GlPipeline(GlFns* gl, const PipelineDesc& desc)
-    : gl_(gl), topology_(to_gl_topology(desc.topology)) {
+    : gl_(gl), topology_(to_gl_topology(desc.topology)), attributes_(desc.attributes) {
     const GLuint vs = compile_shader(gl_, GL_VERTEX_SHADER, desc.vertex_src.c_str());
     const GLuint fs = compile_shader(gl_, GL_FRAGMENT_SHADER, desc.fragment_src.c_str());
 
@@ -83,14 +85,9 @@ GlPipeline::GlPipeline(GlFns* gl, const PipelineDesc& desc)
     gl_->glDeleteShader(vs);
     gl_->glDeleteShader(fs);
 
-    gl_->glCreateVertexArrays(1, &vao_);
-    for (const VertexAttribute& a : desc.attributes) {
-        gl_->glEnableVertexArrayAttrib(vao_, a.location);
-        gl_->glVertexArrayAttribFormat(vao_, a.location, static_cast<GLint>(a.components), GL_FLOAT,
-                                       GL_FALSE, a.offset);
-        gl_->glVertexArrayAttribBinding(vao_, a.location, a.binding);
-        gl_->glVertexArrayBindingDivisor(vao_, a.binding, a.divisor);
-    }
+    gl_->glGenVertexArrays(1, &vao_);
+    // GL 4.1 associates attributes with buffers through VertexAttribPointer when
+    // each binding is supplied. No DSA or GL 4.3 vertex-binding API is required.
     for (const VertexBinding& b : desc.bindings) {
         strides_.emplace_back(b.binding, static_cast<GLsizei>(b.stride));
     }
@@ -112,6 +109,19 @@ GLsizei GlPipeline::stride_for(std::uint32_t binding) const {
         }
     }
     return 0;
+}
+
+void GlPipeline::bind_buffer(std::uint32_t binding, GLuint buffer, std::size_t offset) const {
+    gl_->glBindVertexArray(vao_);
+    gl_->glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    for (const VertexAttribute& a : attributes_) {
+        if (a.binding != binding) continue;
+        gl_->glEnableVertexAttribArray(a.location);
+        gl_->glVertexAttribPointer(a.location, static_cast<GLint>(a.components), GL_FLOAT,
+                                   GL_FALSE, stride_for(binding),
+                                   reinterpret_cast<const void*>(offset + a.offset));
+        gl_->glVertexAttribDivisor(a.location, a.divisor);
+    }
 }
 
 GLint GlPipeline::uniform(const char* name) const {
@@ -165,8 +175,7 @@ void GlCommandBuffer::bind_pipeline(const GpuPipeline& pipeline) {
 void GlCommandBuffer::bind_vertex_buffer(std::uint32_t binding, const GpuBuffer& buffer,
                                          std::size_t offset) {
     const auto& buf = static_cast<const GlBuffer&>(buffer);
-    gl_->glVertexArrayVertexBuffer(pipeline_->vao(), binding, buf.id(),
-                                   static_cast<GLintptr>(offset), pipeline_->stride_for(binding));
+    pipeline_->bind_buffer(binding, buf.id(), offset);
 }
 
 void GlCommandBuffer::set_uniform_mat3(const char* name, const core::Mat3& m) {
@@ -195,7 +204,8 @@ void GlCommandBuffer::set_uniform_int(const char* name, int value) {
 }
 
 void GlCommandBuffer::bind_texture(std::uint32_t unit, const GpuTexture& texture) {
-    gl_->glBindTextureUnit(unit, static_cast<const GlTexture&>(texture).id());
+    gl_->glActiveTexture(GL_TEXTURE0 + unit);
+    gl_->glBindTexture(GL_TEXTURE_2D, static_cast<const GlTexture&>(texture).id());
 }
 
 // ----------------------------------------------------------------------------
@@ -204,21 +214,22 @@ void GlCommandBuffer::bind_texture(std::uint32_t unit, const GpuTexture& texture
 
 GlTexture::GlTexture(GlFns* gl, std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba)
     : gl_(gl), w_(width), h_(height) {
-    GLsizei levels = 1;
-    for (std::uint32_t m = std::max(width, height); m > 1; m >>= 1) {
-        ++levels;
-    }
-    gl_->glCreateTextures(GL_TEXTURE_2D, 1, &id_);
-    gl_->glTextureStorage2D(id_, levels, GL_RGBA8, static_cast<GLsizei>(width),
-                            static_cast<GLsizei>(height));
+    GLint previous_texture = 0;
+    GLint previous_alignment = 0;
+    gl_->glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+    gl_->glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_alignment);
+    gl_->glGenTextures(1, &id_);
+    gl_->glBindTexture(GL_TEXTURE_2D, id_);
     gl_->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    gl_->glTextureSubImage2D(id_, 0, 0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
-                             GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-    gl_->glGenerateTextureMipmap(id_);
-    gl_->glTextureParameteri(id_, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    gl_->glTextureParameteri(id_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    gl_->glTextureParameteri(id_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    gl_->glTextureParameteri(id_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    gl_->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width),
+                      static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    gl_->glGenerateMipmap(GL_TEXTURE_2D);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    gl_->glPixelStorei(GL_UNPACK_ALIGNMENT, previous_alignment);
+    gl_->glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
 }
 
 GlTexture::~GlTexture() {
@@ -273,18 +284,30 @@ GlOffscreenTarget::GlOffscreenTarget(GlFns* gl, int width, int height)
 GlOffscreenTarget::~GlOffscreenTarget() { destroy(); }
 
 void GlOffscreenTarget::create() {
-    gl_->glCreateFramebuffers(1, &fbo_);
-    gl_->glCreateTextures(GL_TEXTURE_2D, 1, &color_);
-    gl_->glTextureStorage2D(color_, 1, GL_RGBA8, w_, h_);
-    gl_->glTextureParameteri(color_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    gl_->glTextureParameteri(color_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    gl_->glCreateRenderbuffers(1, &depth_);
-    gl_->glNamedRenderbufferStorage(depth_, GL_DEPTH_COMPONENT24, w_, h_);
-    gl_->glNamedFramebufferTexture(fbo_, GL_COLOR_ATTACHMENT0, color_, 0);
-    gl_->glNamedFramebufferRenderbuffer(fbo_, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_);
-    if (gl_->glCheckNamedFramebufferStatus(fbo_, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    GLint previous_draw = 0, previous_read = 0, previous_texture = 0, previous_depth = 0;
+    gl_->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw);
+    gl_->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read);
+    gl_->glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+    gl_->glGetIntegerv(GL_RENDERBUFFER_BINDING, &previous_depth);
+    gl_->glGenFramebuffers(1, &fbo_);
+    gl_->glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    gl_->glGenTextures(1, &color_);
+    gl_->glBindTexture(GL_TEXTURE_2D, color_);
+    gl_->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w_, h_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    gl_->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    gl_->glGenRenderbuffers(1, &depth_);
+    gl_->glBindRenderbuffer(GL_RENDERBUFFER, depth_);
+    gl_->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w_, h_);
+    gl_->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_, 0);
+    gl_->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_);
+    if (gl_->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         std::fprintf(stderr, "[musacad_render] offscreen framebuffer incomplete\n");
     }
+    gl_->glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+    gl_->glBindRenderbuffer(GL_RENDERBUFFER, static_cast<GLuint>(previous_depth));
+    gl_->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previous_draw));
+    gl_->glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous_read));
 }
 
 void GlOffscreenTarget::destroy() {

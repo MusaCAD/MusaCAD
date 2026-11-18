@@ -45,13 +45,12 @@ void check(bool cond, const char* what) {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    QGuiApplication app(argc, argv);
-
     QSurfaceFormat fmt;
     fmt.setRenderableType(QSurfaceFormat::OpenGL); // not ES on NVIDIA's EGL (#82)
-    fmt.setVersion(4, 5);
+    fmt.setVersion(4, 1);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     QSurfaceFormat::setDefaultFormat(fmt);
+    QGuiApplication app(argc, argv);
 
     QOffscreenSurface surface;
     surface.setFormat(fmt);
@@ -330,7 +329,8 @@ int main(int argc, char* argv[]) {
     check(high > baseline, "polylines increased the uploaded instance count");
     check(after == baseline, "deletion returned uploaded count to baseline (no residue)");
 
-    ctx.doneCurrent();
+    check(base->glGetError() == GL_NO_ERROR, "rendering produced no OpenGL errors");
+    // Keep the context current while renderer, buffers and framebuffer are destroyed.
     std::printf("\n%s\n", g_failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED");
     return g_failures == 0 ? 0 : 1;
 }

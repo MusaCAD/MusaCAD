@@ -36,6 +36,7 @@ class QResizeEvent;
 class QKeyEvent;
 
 class QTimer;
+class QOffscreenSurface;
 
 namespace musacad::core {
 class IFontEngine;
@@ -47,8 +48,9 @@ class CommandProcessor;
 
 namespace musacad::ui {
 
-/// An OpenGL viewport hosted in a QWindow. A dedicated render thread owns the GL
-/// context and draws at display refresh, consuming render snapshots lock-free
+/// An OpenGL viewport hosted in a QWindow. Linux/Windows use a dedicated render
+/// thread; macOS draws on a GUI timer because Cocoa view attachment and updates
+/// require the main thread. Both consume render snapshots lock-free
 /// from the GeometryEngine (it never touches the GeometryStore). Camera input is
 /// handled on the GUI thread and shared with the render thread under a small
 /// lock, so pan/zoom never involve the geometry thread. Implements ViewControl
@@ -296,10 +298,9 @@ public:
     void block_attribute_manager() override;
     [[nodiscard]] std::vector<core::TiledViewport> tiled_viewports() const override;
     [[nodiscard]] int active_tile() const override;
-    /// The text shown when the OpenGL context falls short of 4.5 Core: the version and
-    /// renderer found, the requirement, and what helps (a driver / GPU with OpenGL 4.5; on
-    /// macOS, which stops at 4.1, that a Metal or OpenGL 4.1 render backend for Musa CAD is
-    /// the missing piece). `on_macos` defaults to the platform this build runs on.
+    /// The text shown when no usable OpenGL 4.1 Core context is available: the version,
+    /// renderer, requirement and platform-specific recovery steps.
+    /// `on_macos` defaults to the platform this build runs on.
     [[nodiscard]] static QString gl_requirement_message(int major, int minor, const QString& renderer,
                                                         bool on_macos =
 #if defined(Q_OS_MACOS)
@@ -745,6 +746,9 @@ private:
     void start_render_thread();
     void stop_render_thread() noexcept;
     void render_loop(core::threading::stop_token token);
+    struct RenderSession;
+    std::unique_ptr<RenderSession> create_render_session();
+    bool render_frame(RenderSession& state);
     void update_viewport_size() noexcept;
     void rebuild_overlay();
     /// Index of the cached grip within `radius_world` of `world`, or -1 (hit-test).
@@ -1153,6 +1157,10 @@ private:
     bool parked_ = false;
     bool render_running_ = false;
 
+    std::unique_ptr<QOffscreenSurface> cleanup_surface_;
+    bool render_on_gui_ = false;
+    std::unique_ptr<RenderSession> gui_render_;
+    QTimer* gui_render_timer_ = nullptr;
     core::threading::jthread render_thread_;
 };
 

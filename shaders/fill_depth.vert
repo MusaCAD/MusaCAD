@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // The scene's filled triangles (hatches, wipeouts, filled text, arrowheads) with their draw
 // order: a world position and a depth per vertex (0 on top .. 1 underneath, DRAWORDER).

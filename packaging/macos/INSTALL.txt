@@ -1,0 +1,17 @@
+Musa CAD for macOS (Apple Silicon, macOS 12 or later)
+
+Drag MusaCAD.app to Applications, then open it from there.
+
+Builds without Apple Developer ID credentials are ad-hoc signed to verify bundle
+integrity, but are not notarized or trusted by Gatekeeper. After verifying the
+release checksum and source, use macOS Privacy & Security's Open Anyway option
+if macOS offers it. Do not disable Gatekeeper globally.
+
+A "damaged" message is not proof of an OpenGL incompatibility. If the app will
+not launch, retain the macOS version, release version and output of:
+  codesign --verify --deep --strict --verbose=2 /Applications/MusaCAD.app
+  spctl --assess --type execute --verbose=2 /Applications/MusaCAD.app
+Report these at https://github.com/MusaCAD/MusaCAD/issues/2.
+
+The viewport now uses OpenGL 4.1 Core, the profile available on macOS.
+Interactive testing on Apple Silicon hardware is still needed.

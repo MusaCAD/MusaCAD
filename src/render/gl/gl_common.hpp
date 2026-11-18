@@ -3,17 +3,17 @@
 
 #pragma once
 
-// Private to the render lib. Pulls in the Qt-provided OpenGL 4.5 Core function
+// Private to the render lib. Pulls in the Qt-provided OpenGL 4.1 Core function
 // set, which is how we load GL entry points without a separate GLAD/GLEW
 // dependency. None of this leaks into a public musacad/ header.
 
-#include <QOpenGLFunctions_4_5_Core>
+#include <QOpenGLFunctions_4_1_Core>
 
 #include "musacad/render/gpu/gpu_types.hpp"
 
 namespace musacad::render::gl {
 
-using GlFns = QOpenGLFunctions_4_5_Core;
+using GlFns = QOpenGLFunctions_4_1_Core;
 
 inline GLenum to_gl_usage(BufferUsage usage) noexcept {
     switch (usage) {

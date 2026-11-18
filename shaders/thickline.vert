@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // Thick-line rendering: each instance is one segment (ax, ay, bx, by) drawn as a
 // screen-space-expanded quad (triangle strip, 4 base vertices). Width is in pixels

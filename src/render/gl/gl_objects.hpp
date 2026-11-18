@@ -47,6 +47,7 @@ public:
     [[nodiscard]] GLenum topology() const noexcept { return topology_; }
     [[nodiscard]] GLsizei stride_for(std::uint32_t binding) const;
     [[nodiscard]] GLint uniform(const char* name) const;
+    void bind_buffer(std::uint32_t binding, GLuint buffer, std::size_t offset) const;
 
 private:
     GlFns* gl_;
@@ -54,10 +55,11 @@ private:
     GLuint vao_ = 0;
     GLenum topology_ = GL_LINES;
     std::vector<std::pair<std::uint32_t, GLsizei>> strides_;
+    std::vector<VertexAttribute> attributes_;
     mutable std::unordered_map<std::string, GLint> uniforms_;
 };
 
-/// An immutable RGBA8 texture with a full mipmap chain (images are mostly viewed
+/// An RGBA8 texture with a full mipmap chain (images are mostly viewed
 /// smaller than their pixel size, so a plain LINEAR sample would alias).
 class GlTexture final : public GpuTexture {
 public:
@@ -112,7 +114,7 @@ public:
                                                const std::uint8_t* rgba) override;
     void submit(GpuCommandBuffer& commands) override;
     [[nodiscard]] const char* backend_name() const noexcept override {
-        return "OpenGL 4.5 Core (DSA)";
+        return "OpenGL 4.1 Core";
     }
 
 private:

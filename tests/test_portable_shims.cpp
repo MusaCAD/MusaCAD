@@ -7,6 +7,9 @@
 // under the sanitizers here too.
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <locale>
 #include <string>
 #include <thread>
 
@@ -119,5 +122,30 @@ TEST_CASE("wait_or_stop: no lost wake-up when the stop lands between the check a
         waiter.request_stop();
         waiter.join();
         REQUIRE(done);
+    }
+}
+
+TEST_CASE("portable number formatting: C locale, precision and lossless file values") {
+    struct Comma : std::numpunct<char> {
+        char do_decimal_point() const override { return ','; }
+    };
+    struct RestoreLocale {
+        std::locale previous = std::locale();
+        ~RestoreLocale() { std::locale::global(previous); }
+    } restore;
+    std::locale::global(std::locale(std::locale::classic(), new Comma));
+    CHECK(format_double_g(51.19483418, 10) == "51.19483418");
+    CHECK(format_double_g(-0.5, 10) == "-0.5");
+    CHECK(format_double_g(1e-12, 10) == "1e-12");
+    CHECK(format_double_g(1234567.0, 4) == "1.235e+06");
+    for (double value : {0.0, -0.0, 0.1, -123456789.1234567, std::nextafter(1.0, 2.0),
+                         std::numeric_limits<double>::max(), std::numeric_limits<double>::min(),
+                         std::numeric_limits<double>::denorm_min()}) {
+        const auto text = format_double_g(value, std::numeric_limits<double>::max_digits10);
+        double result = 0.0;
+        INFO(text);
+        REQUIRE(parse_double_all(text, result));
+        CHECK(result == value);
+        CHECK(std::signbit(result) == std::signbit(value));
     }
 }

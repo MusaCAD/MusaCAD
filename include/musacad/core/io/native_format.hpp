@@ -12,7 +12,7 @@
 namespace musacad::core::io {
 
 // Native ".musa" format: a versioned, line-oriented text format. One record per
-// line; doubles are written with std::to_chars (shortest exact round-trip,
+// line; doubles are written with std::to_chars (shortest exact round-trip; macOS uses max_digits10,
 // locale-independent), so save -> load reproduces the document byte-for-byte in
 // value. Strict parsing -- any malformed record fails without mutating `out`.
 

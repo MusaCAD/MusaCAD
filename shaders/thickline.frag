@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // Round-capped capsule: keep only fragments within the half-width of the segment
 // [v_pa, v_pb]. This gives every segment rounded ends, so consecutive segments of

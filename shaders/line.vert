@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // Instanced line rendering. Each instance is one segment: (ax, ay, bx, by).
 // Two base vertices per instance; gl_VertexID selects the endpoint. No

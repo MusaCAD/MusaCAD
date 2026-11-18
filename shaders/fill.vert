@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // Flat-shaded filled triangles in world space (arrowheads, future hatching).
 // One position per vertex (GL_TRIANGLES); no instancing.

@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // Instanced point rendering. Each instance is one point position (x, y); one
 // base vertex per instance.

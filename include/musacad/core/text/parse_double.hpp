@@ -21,6 +21,14 @@
 #endif
 #endif
 
+// Apple's floating-point to_chars requires macOS 13.3 even when the compiler
+// exposes the overloads. Keep formatting usable on the macOS 12 deployment target.
+#if defined(__APPLE__) || defined(MUSACAD_FORCE_PORTABLE_SHIMS)
+#define MUSACAD_FORMAT_DOUBLE_FALLBACK 1
+#include <locale>
+#include <sstream>
+#endif
+
 namespace musacad::core {
 
 /// Where parse_double stopped and whether it read a number.
@@ -84,9 +92,17 @@ inline bool parse_double_all(std::string_view s, double& out) noexcept {
 /// locale, which QApplication sets to the user's (a comma in es_CO or de_DE), and a number
 /// written that way does not read back as one (#96).
 inline std::string format_double_g(double v, int precision) {
+#if defined(MUSACAD_FORMAT_DOUBLE_FALLBACK)
+    std::ostringstream stream;
+    stream.imbue(std::locale::classic());
+    stream.precision(precision);
+    stream << v;
+    return stream.str();
+#else
     char buf[64];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, precision);
     return ec == std::errc{} ? std::string(buf, ptr) : std::string("0");
+#endif
 }
 
 } // namespace musacad::core

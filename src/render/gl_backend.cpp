@@ -18,8 +18,8 @@ gl::GlFns* current_functions() {
         return nullptr;
     }
     auto* fns = QOpenGLVersionFunctionsFactory::get<gl::GlFns>(ctx);
-    if (fns != nullptr) {
-        fns->initializeOpenGLFunctions();
+    if (fns != nullptr && !fns->initializeOpenGLFunctions()) {
+        return nullptr;
     }
     return fns;
 }

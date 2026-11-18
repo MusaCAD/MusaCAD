@@ -1,18 +1,14 @@
 name: Build macOS app
 
-# Same triggers as the Linux and Windows workflows: a manual run, or a pushed release tag
-# (v*), which also publishes the .dmg to the GitHub release (issue #2). The bundle's command
-# line (--check / --plot) is smoke-tested headless on the runner. The GUI viewport needs
-# OpenGL 4.5 Core, which macOS does not provide (it stops at 4.1): on such a system the app
-# says so at startup and explains what it needs, instead of opening a blank window. Signing
-# and notarization run only when the secrets exist.
+# Manual runs produce test artifacts. Release tags publish the same verified bundle.
+# Ad-hoc signing is always applied; Developer ID + notarization require Apple credentials.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version string for the bundle (e.g. 0.4.0)"
+        description: "Bundle version (blank uses CMakeLists.txt)"
         required: false
-        default: "0.5.0"
+        default: ""
   push:
     tags:
       - "v*"
@@ -22,26 +18,40 @@ permissions:
 
 jobs:
   macos-app:
-    runs-on: macos-14 # Apple Silicon (arm64)
+    runs-on: macos-latest # Apple Silicon; macos-14 was retired in November 2026.
+    timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Derive version
+      - name: Derive and validate version
         id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import os, pathlib, re
+          source = pathlib.Path('CMakeLists.txt').read_text()
+          version = re.search(r'project\(MusaCAD\s+VERSION\s+(\d+\.\d+\.\d+)', source)[1]
+          requested = os.environ.get('INPUT_VERSION', '')
+          if os.environ['GITHUB_EVENT_NAME'] == 'push':
+              requested = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          if requested and requested != version:
+              raise SystemExit(f'Version {requested!r} does not match source version {version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
 
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.1"
+          version: "6.9.3"
           host: mac
           target: desktop
           arch: clang_64
@@ -49,27 +59,35 @@ jobs:
           cache: true
 
       - name: Install build tools
-        run: brew install ninja librsvg
+        run: brew install ninja librsvg ccache
 
-      - name: Configure (Release, Ninja)
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=OFF -DENABLE_TSAN=OFF
+      - name: Restore compiler cache
+        id: compiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: macos-ccache-${{ runner.arch }}-qt693-${{ github.sha }}
+          restore-keys: macos-ccache-${{ runner.arch }}-qt693-
 
-      - name: Build
-        run: cmake --build build --target musacad_app
+      - name: Configure release preset (Apple Silicon, macOS 12+)
+        run: cmake --preset release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
-      - name: Assemble MusaCAD.app + macdeployqt
-        env:
-          VERSION: ${{ steps.ver.outputs.version }}
-        run: packaging/macos/build_app.sh "$VERSION" build/bin/musacad_app
+      - name: Build application and GPU verification
+        id: build
+        run: cmake --build --preset release --target musacad_app musacad_gl_compat --parallel 2
 
-      - name: Smoke-test the bundle (headless --check and --plot)
-        run: |
-          APP=MusaCAD.app/Contents/MacOS/musacad_app
-          QT_QPA_PLATFORM=offscreen "$APP" --check tests/fixtures/cli_demo.musa
-          QT_QPA_PLATFORM=offscreen "$APP" --plot tests/fixtures/cli_demo.musa smoke.pdf
-          test -s smoke.pdf && echo "plot ok: $(wc -c < smoke.pdf) bytes"
+      - name: Save compiler cache
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
-      - name: Sign and notarize (only when the secrets are configured)
+      - name: Verify OpenGL 4.1 rendering on the runner
+        run: build/release/bin/musacad_gl_compat | tee gpu-check.log
+
+      - name: Import signing identity when configured
+        id: signing
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -77,41 +95,175 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          if [ -z "$MACOS_CERT_P12" ] || [ -z "$APPLE_ID" ]; then
-            echo "No signing secrets: the bundle stays unsigned (right-click > Open to run it)."
+          set -euo pipefail
+          if [ -z "$MACOS_CERT_P12$APPLE_ID$APPLE_TEAM_ID$APPLE_APP_PASSWORD" ]; then
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ad-hoc signed test bundle: Apple credentials are not configured. This is not notarized."
             exit 0
           fi
-          echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
-          security create-keychain -p ci build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p ci build.keychain
-          security import cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
-          codesign --deep --force --options runtime --timestamp \
-            --sign "Developer ID Application" MusaCAD.app
-          codesign --verify --deep --strict MusaCAD.app
-          ditto -c -k --keepParent MusaCAD.app MusaCAD.zip
-          xcrun notarytool submit MusaCAD.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_PASSWORD" --wait
-          xcrun stapler staple MusaCAD.app
+          for required in MACOS_CERT_P12 APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [ -z "${!required}" ]; then
+              echo "::error::Incomplete signing configuration: $required is missing."
+              exit 1
+            fi
+          done
+          CERT="$RUNNER_TEMP/musacad-cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/musacad-build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$CERT"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/ {print $2; exit}')"
+          test -n "$IDENTITY" || { echo '::error::No valid Developer ID Application identity'; exit 1; }
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "notarize=true" >> "$GITHUB_OUTPUT"
 
-      - name: Package the .dmg
+      - name: Assemble, deploy and sign MusaCAD.app
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          MACOS_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: packaging/macos/build_app.sh "$VERSION" build/release/bin/musacad_app
+
+      - name: Verify bundle architecture, signatures and isolated CLI
+        run: |
+          set -euo pipefail
+          APP="$PWD/MusaCAD.app"
+          lipo "$APP/Contents/MacOS/musacad_app" -verify_arch arm64
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          FIXTURE="$PWD/tests/fixtures/cli_demo.musa"
+          cd "$RUNNER_TEMP"
+          unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
+          QT_QPA_PLATFORM=offscreen "$APP/Contents/MacOS/musacad_app" --check "$FIXTURE"
+          QT_QPA_PLATFORM=offscreen "$APP/Contents/MacOS/musacad_app" --plot "$FIXTURE" smoke.pdf
+          test -s smoke.pdf
+
+      - name: Capture DYN in the native Cocoa viewport
+        id: gui
+        run: |
+          set -euo pipefail
+          unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
+          MUSACAD_VIEWPORT_LIFECYCLE_TEST=1 MUSACAD_DYN_SHOT="0|$PWD/macos-dyn.png" MusaCAD.app/Contents/MacOS/musacad_app > gui-check.log 2>&1
+          test -s macos-dyn.png
+          grep -q 'GL renderer:' gui-check.log
+          grep -q 'real-key-into-canvas=1 tab=1' gui-check.log
+          grep -q 'viewport resize/hide/show: PASS' gui-check.log
+          grep -q 'packaged SVG icon decode: PASS' gui-check.log
+          if grep -E 'shader compile failed|program link failed|viewport disabled' gui-check.log; then exit 1; fi
+
+      - name: Collect native GUI crash diagnostics
+        if: failure() && steps.gui.outcome == 'failure'
+        timeout-minutes: 2
+        run: |
+          unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
+          MUSACAD_DYN_SHOT="0|$PWD/macos-dyn-debug.png" QT_LOGGING_RULES='qt.qpa.openglcontext.debug=true' \
+            lldb --batch -o run -k 'thread backtrace all' -- MusaCAD.app/Contents/MacOS/musacad_app > lldb-check.log 2>&1 || true
+          mkdir -p macos-diagnostics
+          for report in "$HOME"/Library/Logs/DiagnosticReports/musacad_app*; do
+            if [ -f "$report" ]; then cp "$report" macos-diagnostics/; fi
+          done
+
+      - name: Notarize and staple the app
+        if: steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent MusaCAD.app "$RUNNER_TEMP/MusaCAD.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/MusaCAD.zip" --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait --output-format json > app-notary.json
+          python3 -c 'import json; assert json.load(open("app-notary.json"))["status"] == "Accepted"'
+          xcrun stapler staple MusaCAD.app
+          xcrun stapler validate MusaCAD.app
+          spctl --assess --type execute --verbose=2 MusaCAD.app
+
+      - name: Package the DMG
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          hdiutil create -volname "Musa CAD" -srcfolder MusaCAD.app -ov -format UDZO \
-            "MusaCAD-$VERSION-arm64.dmg"
-          ls -la MusaCAD-*.dmg
+          mkdir dmg-root
+          ditto MusaCAD.app dmg-root/MusaCAD.app
+          ln -s /Applications dmg-root/Applications
+          cp packaging/macos/INSTALL.txt dmg-root/README.txt
+          hdiutil create -volname "Musa CAD" -srcfolder dmg-root -ov -format UDZO "MusaCAD-$VERSION-arm64.dmg"
 
-      - name: Upload .dmg artifact
+      - name: Sign, notarize and staple the DMG
+        if: steps.signing.outputs.notarize == 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          DMG="MusaCAD-$VERSION-arm64.dmg"
+          codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait --output-format json > dmg-notary.json
+          python3 -c 'import json; assert json.load(open("dmg-notary.json"))["status"] == "Accepted"'
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Verify the packaged app and write checksum
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="MusaCAD-$VERSION-arm64.dmg"
+          MOUNT="$RUNNER_TEMP/musacad-mount"
+          mkdir -p "$MOUNT"
+          hdiutil verify "$DMG"
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$MOUNT"
+          trap 'hdiutil detach "$MOUNT"' EXIT
+          codesign --verify --deep --strict --verbose=2 "$MOUNT/MusaCAD.app"
+          QT_QPA_PLATFORM=offscreen "$MOUNT/MusaCAD.app/Contents/MacOS/musacad_app" --check tests/fixtures/cli_demo.musa
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          {
+            echo "### macOS bundle"
+            echo "- Version: $VERSION (arm64)"
+            echo "- OpenGL pixel checks, Cocoa DYN capture, CLI/PDF and mounted DMG verification passed."
+            echo "- Apple notarization: ${{ steps.signing.outputs.notarize }}"
+            echo "- Interactive testing on a user's Mac is still required."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload DMG and checksum
         uses: actions/upload-artifact@v4
         with:
           name: MusaCAD-${{ steps.ver.outputs.version }}-arm64.dmg
-          path: MusaCAD-*-arm64.dmg
+          path: |
+            MusaCAD-*-arm64.dmg
+            MusaCAD-*-arm64.dmg.sha256
           if-no-files-found: error
 
-  # Tag pushes also publish, like the other platforms: create the release if no job has yet,
-  # then attach the .dmg. Manual runs only build.
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-verification
+          path: |
+            gpu-check.log
+            gui-check.log
+            lldb-check.log
+            macos-diagnostics/
+            macos-dyn*.png
+            *-notary.json
+          if-no-files-found: ignore
+
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/musacad-cert.p12"
+          if [ -f "$RUNNER_TEMP/musacad-build.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/musacad-build.keychain-db"
+          fi
+
   publish:
     needs: macos-app
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -124,7 +276,7 @@ jobs:
         with:
           name: MusaCAD-${{ needs.macos-app.outputs.version }}-arm64.dmg
           path: dist
-      - name: Create the release if it does not exist, then attach the artifact
+      - name: Create the release if needed and attach the artifact
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -133,6 +285,6 @@ jobs:
           if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPO" --title "Musa CAD $TAG" \
               --notes "Release notes: docs/release-notes/$TAG.md (see CHANGELOG.md)." \
-              || true # another platform's job may have just created it
+              || true # another platform may have created it concurrently
           fi
           gh release upload "$TAG" dist/* --repo "$REPO" --clobber

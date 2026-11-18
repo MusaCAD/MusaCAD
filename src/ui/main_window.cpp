@@ -137,6 +137,7 @@
 #include "musacad/ui/parameter_dialog.hpp"
 #include "musacad/ui/dimstyle_dialog.hpp"
 #include <QImage>
+#include <QImageReader>
 #include <QLabel>
 #include <QPageSize>
 #include <QPdfWriter>
@@ -445,12 +446,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     cursor_tick_->setInterval(16); // one display frame; the ceiling on UI work per move
     connect(cursor_tick_, &QTimer::timeout, this, [this] { cursor_tick(); });
     connect(viewport_, &ViewportWindow::pickerInteracted, this, [this] { refocus_dyn(); });
-    // No usable OpenGL (below 4.5 Core, or no context): tell the user what is needed and
+    // No usable OpenGL (below 4.1 Core, or no context): tell the user what is needed and
     // close -- a blank viewport would be worse. Queued: the signal comes from the render
     // thread. Under the self-test the text goes to stdout instead of a modal box.
     connect(viewport_, &ViewportWindow::viewportUnavailable, this, [this](const QString& reason) {
         // An older GPU (an Intel HD 3000 has OpenGL 3.3) still draws through the software
-        // renderer, which has 4.5: start again on it rather than give up (#98).
+        // renderer, which supports 4.1: start again on it rather than give up (#98).
         if (restart_with_software_gl()) {
             QCoreApplication::exit(0); // Windows: the new process has it from here
             return;
@@ -471,7 +472,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }, Qt::QueuedConnection);
     if (qEnvironmentVariableIsSet("MUSACAD_SOFTWARE_GL") && !qEnvironmentVariableIsSet("MUSACAD_SELFTEST")) {
         command_widget_->append_line(
-            "The graphics driver has no OpenGL 4.5, so Musa CAD is drawing with the software renderer. "
+            "The graphics driver has no OpenGL 4.1, so Musa CAD is drawing with the software renderer. "
             "It works, but large drawings are slower; a current driver or a newer GPU brings the "
             "hardware back.");
     }
@@ -7958,6 +7959,34 @@ bool MainWindow::dyn_shot(int kind, const std::string& out_png) {
     activateWindow();
     pump(700); // let the GL viewport render a first frame
 
+    if (qEnvironmentVariableIsSet("MUSACAD_VIEWPORT_LIFECYCLE_TEST")) {
+        QImageReader icon_reader(QStringLiteral(":/ribbon/line.svg"), "svg");
+        const bool icons_ok = !icon_reader.read().isNull();
+        std::printf("[dyn_shot] packaged SVG icon decode: %s\n", icons_ok ? "PASS" : "FAIL");
+        if (!icons_ok) return false;
+        const auto capture = [&](const char* stage) {
+            const QString path = QString::fromStdString(out_png + "." + stage + ".png");
+            QFile::remove(path);
+            viewport_->request_frame_capture(path.toStdString());
+            for (int i = 0; i < 100 && !QFile::exists(path); ++i) pump(50);
+            return QFile::exists(path);
+        };
+        resize(1080, 760);
+        pump(200);
+        const bool resized = capture("resized");
+        hide();
+        pump(100);
+        show();
+        raise();
+        activateWindow();
+        pump(200);
+        const bool restored = capture("restored");
+        resize(1200, 820);
+        pump(200);
+        std::printf("[dyn_shot] viewport resize/hide/show: %s\n", resized && restored ? "PASS" : "FAIL");
+        if (!resized || !restored) return false;
+    }
+
     engine_->submit(core::NewDocumentCommand{});
     pump(200);
     dyn_action_->setChecked(true); // F12: enable DYN box + on-geometry tooltips
@@ -11108,13 +11137,13 @@ void MainWindow::apply_vport_configuration(const char* kind) {
 }
 
 bool MainWindow::selftest_vports() {
-    // The OpenGL requirement text (shown when the context falls short of 4.5 Core) names
-    // what was found, what is required, and the macOS-specific missing piece.
-    const QString gl_mac = ViewportWindow::gl_requirement_message(4, 1, QStringLiteral("Apple M2"), true);
+    // The OpenGL requirement text (shown when the context falls short of 4.1 Core) names
+    // what was found, what is required, and platform-specific recovery steps.
+    const QString gl_mac = ViewportWindow::gl_requirement_message(3, 3, QStringLiteral("test renderer"), true);
     const QString gl_pc = ViewportWindow::gl_requirement_message(3, 3, QStringLiteral("llvmpipe"), false);
-    const bool gl_msg_ok = gl_mac.contains(QStringLiteral("OpenGL 4.1 (Apple M2)")) &&
-                           gl_mac.contains(QStringLiteral("4.5 Core")) &&
-                           gl_mac.contains(QStringLiteral("Metal or OpenGL 4.1 render backend")) &&
+    const bool gl_msg_ok = gl_mac.contains(QStringLiteral("OpenGL 3.3 (test renderer)")) &&
+                           gl_mac.contains(QStringLiteral("4.1 Core")) &&
+                           gl_mac.contains(QStringLiteral("local desktop session")) &&
                            gl_pc.contains(QStringLiteral("OpenGL 3.3 (llvmpipe)")) &&
                            gl_pc.contains(QStringLiteral("graphics driver")) &&
                            !gl_pc.contains(QStringLiteral("Metal")) &&
@@ -12418,7 +12447,7 @@ bool MainWindow::restart_with_software_gl() {
         argv.push_back(a.data());
     }
     argv.push_back(nullptr);
-    std::fprintf(stderr, "[musacad_ui] no OpenGL 4.5 from the graphics driver; starting again on the software "
+    std::fprintf(stderr, "[musacad_ui] no OpenGL 4.1 from the graphics driver; starting again on the software "
                          "renderer\n");
     std::fflush(stderr);
     std::fflush(stdout);

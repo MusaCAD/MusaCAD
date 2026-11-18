@@ -1,4 +1,4 @@
-#version 450 core
+#version 410 core
 
 // The scene's points with their draw order: one position and depth per instance (0 on top
 // .. 1 underneath, DRAWORDER).

@@ -126,9 +126,13 @@ void code(std::string& s, int c, std::string_view value) {
     s += '\n';
 }
 void code_d(std::string& s, int c, double v) {
+#if defined(MUSACAD_FORMAT_DOUBLE_FALLBACK)
+    code(s, c, format_double_g(v, std::numeric_limits<double>::max_digits10));
+#else
     char buf[40];
     const auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
     code(s, c, std::string_view(buf, static_cast<std::size_t>(ptr - buf)));
+#endif
 }
 
 // A text as DXF places it: 10 is where its baseline starts, 11 the point it is justified

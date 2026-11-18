@@ -49,7 +49,7 @@ for learning Musa CAD, looking up commands, and solving common problems.
   native 2D backend (`NativeKernel2D`). No third-party CAD/geometry dependency;
   the project is clone-and-build clean.
 - **GPU-accelerated viewport** — backend-agnostic RAII GPU abstraction with an
-  OpenGL 4.6 (DSA) backend. Instanced rendering draws a **1,000,000-primitive
+  OpenGL 4.1 Core backend (including macOS). Instanced rendering draws a **1,000,000-primitive
   scene in ~4–6 draw calls**; pan/zoom upload zero scene bytes and stay smooth
   independent of edit activity (~420–490 FPS measured offscreen on an Intel
   UHD 630 / Mesa).
@@ -168,7 +168,7 @@ and plot renderer as `PLOT`/`Ctrl+P` in the GUI. Full grammar in
 ```
 src/core/      math, generational SoA store, IGeometryKernel + NativeKernel2D,
                threading primitives, snapshots, spatial index, undo/redo
-src/render/    backend-agnostic GPU abstraction + OpenGL 4.6 backend, camera,
+src/render/    backend-agnostic GPU abstraction + OpenGL 4.1 backend, camera,
                grid, viewport renderer
 src/command/   table-driven parser, per-command state machines, coordinate input
 src/ui/        Qt6 frame, threaded GL viewport, command line, status bar
