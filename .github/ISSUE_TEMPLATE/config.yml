@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+- name: User documentation and tutorials
+  url: https://wiki.musacad.org/
+  about: Installation, commands, troubleshooting, and tutorials.
+- name: Report a security vulnerability privately
+  url: https://github.com/MusaCAD/MusaCAD/security/advisories/new
+  about: Keep vulnerability details out of public issues. Email pranay@weberq.in if needed.
+- name: Private conduct or accessibility concerns
+  url: mailto:pranay@weberq.in
+  about: Contact the maintainer when a public issue is not appropriate.

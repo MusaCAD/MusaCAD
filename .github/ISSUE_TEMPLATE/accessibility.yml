@@ -1,0 +1,34 @@
+name: Accessibility barrier
+description: Report a problem with keyboard access, assistive technology, or readability.
+body:
+- type: markdown
+  attributes:
+    value: |-
+      Search existing issues before opening a new report. Share only files you have permission to publish, and remove private information from logs.
+
+      For vulnerabilities, use [private reporting](https://github.com/MusaCAD/MusaCAD/security/advisories/new) or email [pranay@weberq.in](mailto:pranay@weberq.in).
+- type: textarea
+  id: barrier
+  attributes:
+    label: Task and barrier
+    description: Which command, control, page, or output prevents you from completing the task?
+  validations:
+    required: true
+- type: textarea
+  id: expected
+  attributes:
+    label: What would help?
+    description: Describe the result or interaction you need.
+  validations:
+    required: true
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment
+    description: Version/build or page URL; operating system; browser, assistive technology, and display
+      settings if relevant. A diagnosis or medical history is not needed.
+- type: textarea
+  id: details
+  attributes:
+    label: Additional details
+    description: Steps to reproduce or a text description are useful. Screenshots and recordings are optional.

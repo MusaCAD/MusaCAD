@@ -122,6 +122,18 @@ the check off.
 
 ---
 
+## Contributing and community
+
+Bug reports, documentation fixes, testing, and code contributions are welcome.
+Start with the [contribution guide](CONTRIBUTING.md) or
+[open an issue](https://github.com/MusaCAD/MusaCAD/issues/new/choose).
+
+- [Code of Conduct](https://github.com/MusaCAD/.github/blob/main/CODE_OF_CONDUCT.md)
+- [Security policy and private vulnerability reporting](SECURITY.md)
+- [Accessibility and reporting barriers](ACCESSIBILITY.md)
+
+---
+
 ## Building
 
 Musa CAD is **clone-and-build**:

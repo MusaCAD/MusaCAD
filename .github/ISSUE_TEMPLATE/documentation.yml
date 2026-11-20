@@ -1,0 +1,28 @@
+name: Documentation problem
+description: Report incorrect, unclear, or missing documentation.
+body:
+- type: markdown
+  attributes:
+    value: |-
+      Search existing issues before opening a new report. Share only files you have permission to publish, and remove private information from logs.
+
+      For vulnerabilities, use [private reporting](https://github.com/MusaCAD/MusaCAD/security/advisories/new) or email [pranay@weberq.in](mailto:pranay@weberq.in).
+- type: input
+  id: location
+  attributes:
+    label: Page URL or file
+    description: Link to the affected page or identify the file.
+  validations:
+    required: true
+- type: textarea
+  id: problem
+  attributes:
+    label: What needs changing?
+    description: Describe the missing or incorrect information and the task you were trying to complete.
+  validations:
+    required: true
+- type: textarea
+  id: suggestion
+  attributes:
+    label: Suggested correction
+    description: Include the application version if the behavior differs between versions.
