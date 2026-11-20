@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a change and describe the task it would help with.
+body:
+- type: markdown
+  attributes:
+    value: |-
+      Search existing issues before opening a new report. Share only files you have permission to publish, and remove private information from logs.
+
+      For vulnerabilities, use [private reporting](https://github.com/MusaCAD/MusaCAD/security/advisories/new) or email [pranay@weberq.in](mailto:pranay@weberq.in).
+- type: textarea
+  id: problem
+  attributes:
+    label: What task is difficult or missing?
+    description: Describe the practical problem or workflow.
+  validations:
+    required: true
+- type: textarea
+  id: proposal
+  attributes:
+    label: Proposed behavior
+    description: Explain how the feature should work, including commands or controls where relevant.
+  validations:
+    required: true
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Alternatives and references
+    description: Describe workarounds or link to reference behavior. For AutoCAD comparisons, include
+      the version if known and describe the behavior in your own words.
