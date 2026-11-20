@@ -7,5 +7,5 @@ contact_links:
   url: https://github.com/MusaCAD/MusaCAD/security/advisories/new
   about: Keep vulnerability details out of public issues. Email pranay@weberq.in if needed.
 - name: Private conduct or accessibility concerns
-  url: mailto:pranay@weberq.in
+  url: https://github.com/MusaCAD/.github/blob/main/CODE_OF_CONDUCT.md#report-a-concern
   about: Contact the maintainer when a public issue is not appropriate.
