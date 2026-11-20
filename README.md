@@ -13,6 +13,8 @@ and Windows. Musa CAD mirrors AutoCAD's UI layout, command line, and classic
 shortcuts, but runs on a modernized, GPU-accelerated, data-oriented core
 targeting a smooth 144 Hz+ viewport.
 
+[![I did my own AutoCAD](https://idmo.app/badge/musa-cad)](https://idmo.app/p/musa-cad)
+
 > Status: actively developed. The 2D engine (Phases 1–5) is complete; 3D B-rep is
 > deferred behind a stable kernel interface. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
