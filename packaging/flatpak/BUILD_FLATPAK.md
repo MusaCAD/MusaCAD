@@ -20,7 +20,7 @@ You also need `rsync` on the host.
 ## One command
 
 ```sh
-packaging/flatpak/build_flatpak.sh 0.1.0
+packaging/flatpak/build_flatpak.sh 0.9.0
 ```
 
 The script:
@@ -37,12 +37,12 @@ The script:
 ## Install + verify
 
 ```sh
-flatpak install --user -y packaging/flatpak/MusaCAD-0.1.0.flatpak
+flatpak install --user -y packaging/flatpak/MusaCAD-0.9.0.flatpak
 flatpak run org.musacad.MusaCAD                       # launches the GUI
 
-# Headless load + plot self-test (pass envs through the sandbox; the one-off
-# --filesystem grant lets it read and write paths it was not handed by a dialog):
-flatpak run --filesystem=home --env=MUSACAD_PLOT_TEST="$HOME/drawing.musa|$HOME/out.pdf|1" org.musacad.MusaCAD
+# Headless check and plot. The one-off grant gives access to these home paths:
+flatpak run --filesystem=home org.musacad.MusaCAD --check "$HOME/drawing.musa" --json
+flatpak run --filesystem=home org.musacad.MusaCAD --plot "$HOME/drawing.musa" "$HOME/out.pdf" --paper A4
 ```
 
 ## What is bundled / what is not
@@ -77,7 +77,7 @@ in its own repository, [flathub/org.musacad.MusaCAD](https://github.com/flathub/
 `flathub/org.musacad.MusaCAD.yml` here is the upstream copy of it: the same module as the local
 manifest, with the release tag as its source (`tag` and `commit`, moved together for each
 release). The AppStream metainfo carries a `<release>` per version and its screenshot URLs
-resolve on `main`. Lint both before proposing an update (the linter ships with
+use a pinned source commit. Lint both before proposing an update (the linter ships with
 `org.flatpak.Builder`; its sandbox needs to see the files):
 
 ```sh
@@ -118,5 +118,6 @@ Two things open step 3's pull request without anyone doing it by hand:
   did nothing and ends green. It also skips when a pull request for that version is already
   open, so the two paths never duplicate each other.
 
-Installed copies learn about the new version on their own: the app checks Flathub once a day
-and shows the update in its status bar (Options turns the check off).
+Flathub publishes updates after the manifest change is merged and built. Use
+`flatpak update org.musacad.MusaCAD` to install them. See the
+[update guide](https://wiki.musacad.org/get-started/updating/) if no update appears.

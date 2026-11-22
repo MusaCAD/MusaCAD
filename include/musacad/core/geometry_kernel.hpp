@@ -15,14 +15,8 @@ class GeometryStore;
 
 /// Narrow geometry-operations interface. Every input and output uses Musa CAD's
 /// own types only (Vec2/Vec3, EntityHandle, GeometryStore) -- no external
-/// library type ever appears here. This is the seam behind which a future
-/// NativeKernel3D or optional B-rep backend could be added without touching the
-/// command/render/UI layers.
-///
-/// The surface is deliberately minimal: it contains only operations with a
-/// concrete caller in the current roadmap (tessellation for the renderer and
-/// command echo; closest-point and intersection for OSNAP). No speculative
-/// methods (offset, booleans, parametric eval) are reserved here.
+/// library type ever appears here. The interface provides tessellation,
+/// closest-point and intersection queries, and offsets for the OFFSET command.
 class IGeometryKernel {
 public:
     virtual ~IGeometryKernel() = default;

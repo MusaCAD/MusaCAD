@@ -1,8 +1,13 @@
 # Musa CAD — Architecture
 
-This document tracks the system's structure as it is built phase by phase.
-Sections marked _(planned)_ describe seams that exist now but are filled in
-later phases.
+This document describes the engine and records the design behind individual
+features. Sections with phase numbers are implementation history; those numbers
+are not release versions. For current behavior, use the source and
+[command status](COMMANDS.md). For planned work, use the
+[roadmap](ROADMAP.md) and linked issues.
+
+The [wiki](https://wiki.musacad.org/developer/) has the build guide and codebase tour.
+This file stays next to the source so implementation changes can update it directly.
 
 ## Modules / targets
 
@@ -19,8 +24,10 @@ headless heart of the engine.
 
 ## Threading model
 
-Three long-lived threads communicate only via message queues and immutable
-snapshots — never shared mutable state:
+The UI and geometry worker communicate through commands and snapshots. On Linux
+and Windows, rendering normally runs on a third thread. macOS renders on the GUI
+thread to meet Cocoa/OpenGL requirements; the geometry worker remains separate.
+The usual three-thread layout is:
 
 ```
  UI / Command thread          Geometry / Compute thread        Render thread
@@ -55,11 +62,8 @@ The **camera is per-document** but lives UI-side (a `docId → Camera2D` map in 
 viewport), since panning/zooming is pure CPU and never touches the geometry thread.
 **LWDISPLAY** is treated as global (app-wide), matching AutoCAD.
 
-**The "DocumentManager" is the engine's document registry, on the geometry thread.** The
-prompt's notion of a global DocumentManager is realised here as the engine owning the
-documents — because the engine owns the stores, and a UI-thread manager owning stores
-would violate the "UI never touches the store" invariant the codebase has held since
-Phase 2. The engine keeps the **active** document's heavy state in its live members (so
+**The document registry belongs to the geometry engine.** The engine owns the
+stores, so a UI-thread document manager must not access them directly. The engine keeps the **active** document's heavy state in its live members (so
 all single-document code is unchanged) and **parks** inactive documents' state in a
 `docId → DocState` map. `GeometryStore`/`SpatialGrid` are movable, so a switch is a
 move-swap of those members — no copy, no churn at the ~200 `store_` call sites.
@@ -156,41 +160,21 @@ handoff plus the MPSC queue end-to-end with multiple concurrent producers.
 
 ## Geometry kernel strategy
 
-Musa CAD owns its data model and a narrow kernel interface, and ships a
-complete native 2D kernel. No third-party geometry kernel is a dependency.
+Musa CAD owns its data model and the `IGeometryKernel` interface. The native
+`NativeKernel2D` backend uses Musa CAD types and the `GeometryStore`; no third-party
+geometry kernel is required.
 
-* `IGeometryKernel` _(core, Phase 2)_ — curve evaluation, intersection,
-  offset, tessellation, future booleans. **All inputs/outputs use our own
-  types** (`Vec2`/`Vec3`, generational handles, SoA buffers). No external
-  library type ever appears in a public `musacad/` header.
-* `NativeKernel2D` _(core, Phase 2)_ — the default, fully-functional backend
-  for all 2D primitives, operating directly on the SoA `GeometryStore`.
-* A documented seam is left for a future `NativeKernel3D` / optional external
-  B-rep backend behind the same interface — no such dependency exists now.
+The interface provides four operations:
 
-**Kernel surface (deliberately minimal).** `IGeometryKernel` exposes exactly the
-three operations with a concrete caller in the current roadmap:
-* `tessellate` — curve → polyline approximation; used by the renderer (Phase 3)
-  and command echo (Phase 4).
-* `closest_point` — OSNAP "nearest" (Phase 5).
-* `intersect` — OSNAP "intersection" (Phase 5).
+- `tessellate`: approximate an entity as a polyline for rendering and geometry queries.
+- `closest_point`: find a point on an entity, including OSNAP nearest.
+- `intersect`: find intersections between entities for snapping and geometry operations.
+- `offset`: produce an offset entity for the OFFSET command, including its gap mode.
 
-No `offset`, boolean, or parametric-eval methods are reserved: nothing in the
-Phase 2–5 roadmap calls them (there is no OFFSET command), so per the
-"no speculative surface" rule they are omitted until a caller exists. The seam
-is the *type boundary* (our types in, our types out), enforced by both a
-compile-time check (`tests/test_header_hygiene.cpp`, which includes every public
-core header while linking only `musacad_core`) and a textual scan
-(`tests/header_scan.cmake`).
-
-### Extension point: a future 3D / B-rep backend
-
-To add 3D solids later, implement `IGeometryKernel` in a new `NativeKernel3D`
-(or an adapter over an external B-rep kernel) and add 3D primitive arenas to the
-store. Crucially, any B-rep/tessellation results are converted to **our** SoA
-`Vec2`/`Vec3` buffers at the kernel boundary, so the command, render, and UI
-layers — which only ever see `RenderSnapshot` and our types — need no changes.
-No external library type may cross into a public `musacad/` header.
+The interface is defined in `include/musacad/core/geometry_kernel.hpp`. Public
+core headers are checked by `tests/test_header_hygiene.cpp` and
+`tests/header_scan.cmake`. The interface is an implementation boundary for the
+2D engine, not a commitment to a future 3D product.
 
 ## Data-oriented storage
 
@@ -208,7 +192,7 @@ invalidates handles to others, and a reused index is detectably distinct from
 the stale handle that previously held it. Batch consumers iterate the raw span
 and skip dead slots via `alive(i)`. No virtual dispatch is used on these paths.
 
-Insertion throughput (release build, this machine): **~32 ns/line**, i.e. 1,000,000
+Historical insertion benchmark (release build): **~32 ns/line**, i.e. 1,000,000
 lines in ~32 ms.
 
 ### Blocks: definition table + INSERT references (Phase 28)
@@ -480,7 +464,7 @@ even though the vertex pools are append-only. Verified at the data level
 (`tests/render_offscreen.cpp`): adding then deleting 50k polylines returns the
 uploaded instance count to baseline.
 
-### Measured (real hardware, this machine)
+### Historical rendering benchmark
 
 Offscreen render of a **1,000,000-line** scene on the Intel UHD 630 (Mesa),
 1280×720, no vsync: **4 draw calls**, **~2.1–2.4 ms/frame (≈420–470 FPS)**, and
@@ -1360,7 +1344,7 @@ exporter end to end.
   ("Imported N…; skipped K unsupported (HATCH x12, IMAGE x4, …)") — echoed to the
   command line **and** written to `<source>.dwg.import.log`, so migration gaps are
   recorded, not silently dropped. The prioritised fidelity backlog lives in
-  `docs/TODO.md`.
+  [the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md).
 * **Export = the EXISTING DXF export then convert.** `SaveDocumentCommand{tempDxf}`
   (geometry thread) → wait for the temp DXF → `to_dwg(tempDxf, out.dwg, "ACAD2018")`.
   Honestly two-stage lossy: capped first by Musa→DXF fidelity, then by the converter
@@ -1962,7 +1946,7 @@ from `tests/fixtures/symbol_sheet.musa`, where every symbol is reached from a **
 single-line TEXT** through `\U+XXXX` — so the sheet proves the escape's new reach as well
 as the glyphs.
 
-## Raster IMAGE entity (issue #10) — model, seam and plot; viewport deferred
+## Raster IMAGE entity (issue #10)
 
 A `.musa` could not embed an image, so a logo in a title block or a shaded pictorial had
 to be composited onto the output *after* plotting — meaning it was not part of the
@@ -2043,18 +2027,13 @@ deliberately does not carry them. `make_store_image_source` backs one with the s
 definition table plus the injected decoder and **caches by definition index**, so plotting
 N placements of one logo decodes once.
 
-### Deferred: the viewport path
+### Viewport and DXF
 
-`GpuTexture` in the public `render/gpu/` headers with a GL 4.1 implementation
-(`glCreateTextures`/`glTextureStorage2D`/`glTextureSubImage2D`), an image shader pair, and
-a renderer-side texture cache keyed by definition index and invalidated on `version`
-change. Images are few, so a draw call per image is acceptable — but that **raises the
-documented draw-call bound**, which is why it is a deliberate step rather than a
-side-effect. Until it lands the scene bound is unchanged at **4 (6 with aids)**, because
-nothing image-related reaches the GL renderer yet.
-
-DXF `IMAGE`/`IMAGEDEF` + the OBJECTS section is likewise deferred; **nothing is written**,
-stated rather than half-implemented. Both are in `docs/TODO.md`.
+Raster images are displayed through `GpuTexture`, the image shaders and a
+renderer-side texture cache. The OpenGL backend uses the 4.1-compatible bind-based
+texture APIs. The DXF reader and writer support `IMAGE` and `IMAGEDEF`, with the
+image dictionary and object handles. These paths are implemented; the original
+viewport and DXF deferrals no longer apply.
 
 ## GD&T: feature control frames + datum feature symbols (issue #8)
 
@@ -2116,7 +2095,7 @@ override block. v1–v16 files simply have no FCF/DATUM records.
 as a string with `%%v` field separators plus a dimstyle reference, and that is a real
 interop path, but it did not fit this issue's budget. Writing a half-valid TOLERANCE would
 be worse than writing none, so GD&T is **native-only** for now and the gap is recorded in
-`docs/TODO.md` rather than papered over.
+[the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md) rather than papered over.
 
 ### A pre-existing bug this surfaced
 
@@ -2141,7 +2120,7 @@ load.
 **Deferred, stated:** DXF TOLERANCE export/import; the Ph11 `ParameterDialog` input
 surface for the frame (command-line Q&A is implemented, which is the scriptable half);
 editing an existing frame's cell list from the Properties palette (the PR exposes styling,
-not the variable-length cell list). All in `docs/TODO.md`.
+not the variable-length cell list). All in [the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md).
 
 ## DIMCONTINUE / DIMBASELINE (issue #28)
 
@@ -2171,7 +2150,7 @@ instead of away from it, and every stacked dimension lands on the same line.
 
 Baseline spacing is derived as **1.5 × the effective text height**, which reproduces
 AutoCAD's ISO default (DIMDLI 3.75 mm at 2.5 mm text) without adding a style variable and a
-format bump. A real `DIMDLI` field is recorded in `docs/TODO.md`.
+format bump. A real `DIMDLI` field is recorded in [the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md).
 
 Each pick is its **own undo group** (the MATCHPROP target-loop convention), so a
 five-dimension chain undoes one dimension at a time rather than vanishing at once.
@@ -2263,7 +2242,7 @@ load with no tables.
 
 **DXF: `ACAD_TABLE` is not written — a stated gap.** It is a proxy-heavy entity whose
 practical value to most consumers is low; exporting the table as its constituent lines and
-text is the more useful first step and is recorded in `docs/TODO.md` rather than faked.
+text is the more useful first step and is recorded in [the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md) rather than faked.
 
 ## Dimension text: override and position (issues #20, #21)
 
@@ -2390,7 +2369,7 @@ it — which is why #12 had to land after #7).
 
 **Deferred, stated:** the short-leader variant of outside text (ISO 129-1 permits the value
 on a leader instead of on the dimension line's extension). It did not fall out of this
-work cheaply; tracked in `docs/TODO.md`.
+work cheaply; tracked in [the earlier deferred-work notes](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/TODO.md).
 
 ## The plot path, and the command line that rides it (Phase 30 + issue #11)
 
@@ -2491,184 +2470,11 @@ it, asserting each exit code (0/1/2/3) and that `--plot` emits a structurally va
 (`%PDF-` signature, `%%EOF` trailer, non-trivial size). PDFs are **not** byte-compared —
 that would be flaky; geometry correctness is asserted numerically elsewhere.
 
-## Build / phase status
+## Development history
 
-* **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6
-  window; sanitizer + warnings infrastructure; all five targets established.
-* **Phase 2 — complete:** double-precision math types; generational handles; SoA
-  `GeometryStore`; `IGeometryKernel` + `NativeKernel2D`; `MpscQueue`,
-  lock-free `TripleBuffer`, and the `GeometryEngine` worker. 27 unit tests pass
-  under ASan/UBSan and ThreadSanitizer; header-hygiene enforced.
-* **Phase 3 — complete:** backend-agnostic GPU abstraction + OpenGL 4.1 backend;
-  camera (pan/zoom-about-cursor), decade-stepping grid, instanced line/point
-  rendering, stroke-font FPS overlay; render-thread viewport hosted in the main
-  window. 39 unit tests + an offscreen real-GPU verification harness pass.
-* **Phase 4 — complete:** table-driven command line (`L/C/PL/A/REC/U/ERASE/ZOOM`),
-  per-command state machines, absolute/relative/polar coordinate parsing,
-  bottom-docked command widget with history + ENTER-repeat + ESC, live
-  status-bar coordinate readout, and a geometry-thread undo model. 60 unit tests
-  pass (ASan + TSan); full command→queue→store→snapshot round-trip verified.
-* **Phase 5 — complete:** uniform spatial index (OSNAP + ERASE-pick); OSNAP
-  (endpoint/midpoint/center/intersection/nearest) published via the snapshot;
-  render-side crosshairs; snap markers; ortho/polar/grid-snap; F3/F7/F8/F9/F10
-  and Ctrl+Z/Ctrl+Y; status-bar indicators; toolbar. 80 unit tests pass under
-  ASan + TSan.
-
-* **Phase 6 — complete:** AutoCAD-2023-style Ribbon frame (QAT + tabbed panels +
-  file/layout tabs + status-bar mode toggles), full-crosshair-with-pick-box
-  cursor, and registry-driven command autocomplete. 85 unit tests pass under
-  ASan + TSan; presentation-only (no command logic changes).
-
-* **Phase 7 — complete:** render-side live preview (rubber-banding) for all draw
-  commands; AutoCAD selection (single-pick / window / crossing, Shift-add,
-  Esc-clear, select-all) with highlight; Modify panel — MOVE, COPY, MIRROR,
-  OFFSET, and TRIM (line subset) with cursor preview/ghost and undo/redo;
-  selection-driven button enablement. 100 unit tests pass under ASan + TSan.
-
-* **Phase 8 — complete:** empty Model space on launch (demo behind `MUSACAD_DEMO`);
-  Delete/Backspace erases the selection (one undo group); full OSNAP set
-  (endpoint/midpoint/center/node/quadrant/intersection/perpendicular/tangent/
-  centroid/nearest) with distinct render-side markers, a toggleable running-osnap
-  mask, and documented precedence. 110 unit tests pass under ASan + TSan.
-
-* **Phase 9 — complete:** Delete/Backspace erase fixed via an app-wide event
-  filter (verified on the real window); snap markers strengthened (bright/bold/
-  larger, centralized theme); rollover hover-highlight (render-side, three
-  distinct states). 112 unit tests pass under ASan + TSan.
-
-* **Phase 10 — complete:** the Modify suite — ROTATE, SCALE, ARRAY (rect+polar),
-  EXTEND, TRIM (exact, line entities), FILLET (line/line incl. tangent arc),
-  CHAMFER — on shared `NativeKernel2D` intersection primitives, each one undoable
-  group, wired to ribbon + alias. 124 unit tests pass under ASan + TSan.
-
-* **Phase 11 — complete:** persistence — native `.musa` save/open (lossless,
-  proven round-trip), DXF import/export (R2000; LibreCAD-verified), dirty
-  tracking, all on the geometry-thread message pipeline, fail-safe on bad input.
-  147 unit tests pass under ASan + TSan.
-
-* **Phase 12 — complete:** layers & the ByLayer/override property model —
-  layer table + CRUD, effective-property resolution, off/frozen skip + locked
-  inert (render & pick), per-colour batched rendering, the Layer Manager UI, and
-  native-v2 + DXF LAYER-table persistence. 159 unit tests pass under ASan + TSan.
-
-* **Polyline arc segments (bulges) — complete:** filleted rectangle/polyline corners
-  are now true arc segments (per-vertex bulge), so DIMRADIUS/DIMDIAMETER can dimension
-  them. Tessellation is zoom-adaptive and shared; geometry stays parametric; native v5
-  + DXF code 42 round-trip (LibreCAD-verified). `PolylineData` 20→24 B; insert baseline
-  unchanged. 204 tests (dev) / 203 (TSan) pass under ASan + TSan.
-* **Phase 27 — complete:** DWG import/export via an EXTERNAL converter (FreeCAD
-  pattern). `ui/dwg_converter` discovers ODA File Converter / LibreDWG at runtime and
-  invokes it as a subprocess off the UI thread; import reuses the existing fail-safe
-  DXF load and surfaces an itemised gap catalog (+ a `.import.log`); export reuses the
-  DXF exporter then converts (two-stage lossy, stated). LGPL-clean: no GPL/converter is
-  linked, bundled, or in the build (process boundary). DWGIN/DWGOUT + ribbon. No
-  data-model change. 234 tests (dev) / 233 (TSan); real-window selftest via a mock
-  converter (graceful-degradation, discovery, import+catalog, export round-trip).
-* **Phase 26 — complete:** DYN autocomplete (the Ph6 registry suggestions anchored
-  at the cursor field, one source, NoFocus popup). Draw/transform stay interactive
-  (ribbon starts the command, pick on screen — the AutoCAD model; the cursor value
-  surface is DYN, not a modal); CIRCLE gained the radius/[Diameter] option keyword
-  (identical in command line + DYN). ARRAY keeps its Ph11 multi-parameter dialog. No
-  data-model change. 234 tests (dev) / 233 (TSan); real-window selftest (autocomplete,
-  ribbon-starts-interactive, [Diameter] option, typed radius).
-* **Phase 25 — complete:** Dynamic Input (DYN / F12). A cursor-anchored surface
-  (`DynInput`) over the existing CommandProcessor — typed text routes through
-  `submit_line` (Ph4 parser, Ph6 tokens), a `FanoutOutput` mirrors the prompt to the
-  bottom command line, and live dimensional input (length/angle, radius, w/h) reads the
-  preview's constrained cursor and commits via composed coordinate strings. Persisted
-  F12 toggle; the focus rule keeps Delete/Esc/click/drag/grip/double-click/PR+command-
-  line typing all working with DYN on (real-window verified). No data-model change. 233
-  tests (dev) / 232 (TSan); real-window selftest.
-* **Phase 24 — complete:** dimension properties in PR (per-dimension overrides). A
-  compact `DimOverrides` bitmask+values (Ph12 ByLayer/override shape) in `DimData`,
-  resolved override-first in the single `compute_dim_geometry` path; 8 PR rows via the
-  registry (arrow type/size, dim/ext/text colour, text height/placement, precision)
-  with ByStyle-or-Overridden + reset-to-style; one undo group; multi-dim varies/set-all;
-  native v8 lossless (DXF override-vs-style native-only). Hot structs unchanged. 232
-  tests (dev) / 231 (TSan); real-window selftest (set/reset/undo/multi).
-* **Phase 23 — complete:** linetype pattern rendering + LTSCALE. One arc-length dash
-  walker (`core/linetype`) dashes lines and curves through the same path (phase carries
-  across tessellation vertices; zoom-consistent; bounded draw calls). Patterns follow
-  acad.lin; LTSCALE (command + native v7 + DXF $LTSCALE + LTYPE table, LibreCAD-verified)
-  scales them and re-dashes live. Derived-not-baked; no entity-struct change. Closes the
-  Ph22 PR-linetype gap. 229 tests (dev) / 228 (TSan); real-window selftest.
-* **Phase 22 — complete:** Properties palette (PR). A generic descriptor registry
-  (`core/properties_registry`) drives a geometry-thread `summarize_selection` (values
-  + `varies`, published in the snapshot) and a single `SetPropertyCommand` write path
-  (one undo group over the whole selection). Dark dockable panel handles all four
-  multiplicity cases (none/one/many-same/mixed). Universal Layer/Color/Linetype/
-  Lineweight + read-only Geometry + full Text/MTEXT group; Dimension/numeric-geometry
-  groups staged behind the same registration. No data-model change. 221 tests (dev) /
-  220 (TSan); real-window selftest verifies multiplicity + observed store edits + undo.
-* **Phase 21 — complete:** editable text — double-click a TEXT/MTEXT/QLEADER label
-  to edit its content (dark modal editor pre-filled from the snapshot) + TEXTEDIT/
-  DDEDIT/ED command (scriptable path). Both submit one `EditTextContentCommand` that
-  changes only the content as one undo group (layer/props/position preserved), with
-  layout recomputed at snapshot. No data-model change; 216 tests (dev) / 215 (TSan);
-  observed-outcome self-test (store content BEFORE→AFTER, undo restores).
-* **Phase 20 — complete:** MTEXT (paragraph text, word-wrap, attachment/spacing/
-  width-factor fields, width + insertion grips) and QLEADER (arrow + leader vertices +
-  owned MTEXT label; arrow/vertex/text grips; the label moves with the leader). Both
-  store discrete editable fields with layout computed at snapshot (PR-ready); one shared
-  text-layout path; native v6 + DXF MTEXT/LEADER round-trip (LibreCAD-verified, MLEADER
-  fidelity gap stated). New structs in their own arenas (MTextData 80 B, MLeaderData
-  96 B); LineData/DimData unchanged; insert ~36 ns. 213 tests (dev) / 212 (TSan) pass.
-* **Phase 19 — complete:** full dimension grip set (both ext-line origins, both
-  dim-line feet, offset midpoint — grabbable anywhere, freely placeable; no edit-path
-  fork, `DimData` unchanged) + HiDPI device-pixel-ratio lineweight fix (lineweights and
-  screen markers are the same physical size on 1× and 2× displays; the renderer scales
-  by `dpr`, self-correcting on monitor change). 206 tests (dev) / 205 (TSan) pass; insert
-  ~40 ns/line, draw calls bounded.
-* **Phase 17 — complete:** grip editing (direct manipulation) — a per-entity grip
-  system (`core/grips`) with grips for line/circle/arc/polyline/rectangle/text and the
-  rich dimension set (dim-line offset + def-point re-measure). A grip drag is a
-  transient preview computed on a temp store (zero store/op-log churn mid-drag),
-  commits as one undo group on release, Esc cancels; ORTHO/POLAR/OSNAP honored; grip
-  squares batched (draw calls bounded). Geometry stays parametric; grip-edited drawings
-  round-trip native + DXF. 199 tests (dev) / 199 (TSan) pass under ASan + TSan.
-* **Phase 16 — complete:** zoom-adaptive curve tessellation (smooth arcs/circles at
-  any zoom; re-tessellate on a zoom-bucket change, never on pan; curves stay
-  parametric, work capped at 8192 segs/curve), round thick-line joins/caps via a
-  capsule-SDF fragment shader (no gaps/notches, no extra draw call), and full
-  dimension placement preview that rubber-bands the live dimension to the cursor for
-  every dim type (zero store/op-log mutation during the drag). 195 tests (dev) / 194
-  (TSan) pass under ASan + TSan.
-* **Phase 15 — complete:** object-aware dimensioning (select the circle/arc/line/
-  segment; the geometry thread reads its intrinsic geometry), the smart all-in-one
-  **DIM** command (hover previews + dispatches by entity kind to the shared
-  machinery), and AutoCAD-accurate DPI-anchored lineweight (`px = mm × DPI/25.4`,
-  Default = 1px hairline). Dims store def points only — deleting the source entity
-  never dangles them. No shared struct grew; native/DXF formats unchanged. 188
-  tests (dev) / 187 (TSan) pass under ASan + TSan.
-* **Phase 14 — complete:** real lineweight rendering (screen-space expanded
-  quads, LWDISPLAY toggle), solid filled arrowheads (filled/open/tick/dot),
-  DIMSTYLE per-element colours, and the remaining dimension types (radius/diameter/
-  angular) + leaders. Native v4 + DXF round-trip; `docs/AUTOCAD_CONFIG.md` catalogs
-  the full config roadmap. 177 unit tests pass under ASan + TSan.
-* **Phase 13 — complete:** vector text rendering (single-stroke font), the TEXT
-  entity, and dimensions (DIMLINEAR + DIMALIGNED solid, others staged) with a real
-  DIMSTYLE table, arrowheads, the Annotate ribbon, a dimstyle dialog, and native-v3
-  + DXF persistence. 172 unit tests pass under ASan + TSan.
-
-## Known deferrals
-
-* **Vertex-pool compaction** — removed polylines/splines leave vertices in the
-  append-only pool (snapshots already ignore them; memory reclaim is deferred).
-* **ERASE-Last re-tracking** — an entity restored by undoing an erase is not
-  re-tracked for a later `ERASE Last`.
-* **Vulkan backend** — the GPU seam exists; only the OpenGL 4.1 backend is
-  implemented.
-* **Adaptive spatial-index cell size** — currently a fixed uniform grid.
-* **TRIM of arcs/circles/curves** — only line trimming is implemented; curve
-  trimming and the broader Modify suite (ROTATE/SCALE/EXTEND/FILLET/...) are
-  Planned (Phase 8) in COMMANDS.md.
-* **In-command "Select objects:" prompting** — Modify commands consume a
-  pre-existing selection (buttons gate on it); selecting *during* a Modify
-  command is deferred.
-* **Snap tooltip text label** (e.g. "Endpoint" next to the marker) — deferred;
-  the render-side stroke font currently has only digits + a few glyphs, so a full
-  alphabet (or a Qt text overlay) is needed first.
-* **Windows** — build is configured per docs/BUILD.md but verified only on Linux.
+The early phase completion lists and deferred-work checklist are retained in
+[repository history](https://github.com/MusaCAD/MusaCAD/blob/bf479901fecccf3ed92ca2158648fd320156c0b9/docs/ARCHITECTURE.md#build--phase-status).
+Use the [roadmap](ROADMAP.md) and issue tracker for current work.
 
 ## Dimension text angle and the arc-length leader (issues #56, #57)
 
