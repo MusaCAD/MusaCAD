@@ -8,10 +8,11 @@ external converter, the sanitizers and the headless smoke test -- is on the wiki
   https://wiki.musacad.org/developer/packaging/
 
 Offline, the short version. You need a C++23 compiler (GCC 13+, Clang 17+ or MSVC 19.38+),
-CMake 3.25+, Ninja and Qt 6.4+; on Debian or Ubuntu:
+CMake 3.25+, Ninja and Qt 6.4+. On Debian or Ubuntu, install these packages and
+check that the compiler meets the version requirement:
 
 ```sh
-sudo apt-get install -y build-essential cmake ninja-build qt6-base-dev libvulkan-dev
+sudo apt-get install -y build-essential cmake ninja-build qt6-base-dev
 ```
 
 Then:

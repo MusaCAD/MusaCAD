@@ -1,9 +1,11 @@
-# Musa CAD — Commands & Shortcuts (living roadmap)
+# Musa CAD — command implementation reference
 
-This is the living specification of Musa CAD's AutoCAD-style commands. Each row
-has a **Status**: `Implemented`, or `Planned (Phase N)`. Every future phase
-implements a slice and flips rows to `Implemented`. Phase numbers beyond the
-current one are a tentative roadmap and may shift.
+This table records command behavior and remaining compatibility work in the
+source tree. `Implemented` and `Planned` describe the listed behavior; old phase
+numbers are historical references, not release versions or delivery dates.
+Use the [wiki command reference](https://wiki.musacad.org/reference/) for usage
+instructions and the [issue tracker](https://github.com/MusaCAD/MusaCAD/issues)
+for current work.
 
 Conventions: type the **Alias** or full name at the command line (autocomplete
 suggests both); aliases are case-insensitive.
@@ -13,8 +15,8 @@ suggests both); aliases are case-insensitive.
 Every command carries a one-line **description** and an **icon** in its registry row
 (`CommandRegistry::make_default`, the single source of truth). The ribbon reads these to
 build each button's icon and its hover tooltip (`NAME (ALIAS) — description`); the same
-descriptions are available for future help / command-search. Catalog of the 38 registered
-commands (Ribbon Phase A):
+descriptions also support command search. The table below records command descriptions
+and behavior:
 
 | Command (alias) | Description |
 |---|---|

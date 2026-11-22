@@ -3,9 +3,9 @@
 
 # Musa CAD — command line
 
-The `musacad` program opens, checks and plots drawings from a terminal or a script, with
-no window: every option, the exit codes, the JSON report of `--check` and ready-to-use
-recipes (a folder of drawings to PDF, a CI step, a Windows batch file) are on the wiki:
+The `musacad` program opens drawings in the GUI, or checks and plots them without a
+window from a terminal or script. The wiki covers every option, exit codes, the
+JSON report from `--check`, batch plotting, CI and Windows scripts:
 
 * **The command line:** https://wiki.musacad.org/scripting/command-line/
 

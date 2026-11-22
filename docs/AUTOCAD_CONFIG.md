@@ -1,8 +1,10 @@
-# Musa CAD — AutoCAD configuration catalog (living roadmap)
+# Musa CAD — settings implementation reference
 
-The configurable AutoCAD options relevant to a 2D drafter, as the roadmap for
-Musa CAD's settings. **Status**: `Implemented` (with the phase it landed, e.g.
-`Ph15`) or `Planned`. Grouped by where AutoCAD exposes them.
+This table records implemented settings and remaining AutoCAD compatibility work,
+grouped by where AutoCAD exposes each option. Old phase numbers are historical
+references, not release versions or delivery dates. Use the
+[wiki](https://wiki.musacad.org/) for instructions and the
+[issue tracker](https://github.com/MusaCAD/MusaCAD/issues) for current work.
 
 ## DIMSTYLE — Lines tab
 
@@ -153,8 +155,8 @@ renders on the canvas at the cursor: the `[Area/Dimensions/Rotation]` keyword is
 the other-corner step, then **Length**/**Width**/**Area**/**Rotation** each appear as an
 at-cursor **sub-prompt cell** (driven by `PreviewSpec::scalar_prompt`, distinct from the
 on-geometry Length/Width drag fields), and the size, once fixed, previews as a
-quadrant-flipped rectangle for the final corner pick. The earlier deferred context-aware
-DYN-box item is now closed — see [TODO.md](TODO.md).
+quadrant-flipped rectangle for the final corner pick. See the
+[Dynamic Input guide](https://wiki.musacad.org/user-manual/dynamic-input/) for usage.
 
 ## OFFSET — entity handling
 

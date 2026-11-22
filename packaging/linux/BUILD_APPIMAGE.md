@@ -8,7 +8,7 @@ platform plugin). It runs on any reasonably recent glibc Linux without installin
 ## One command
 
 ```sh
-packaging/linux/build_appimage.sh 0.1.0
+packaging/linux/build_appimage.sh 0.9.0
 ```
 
 This is the same script CI runs (`.github/workflows/build-linux.yml`). It:
@@ -50,16 +50,16 @@ have no FUSE). The produced AppImage itself runs via FUSE *or* the same extract-
 Run it from a directory the build never touched (e.g. `/tmp`):
 
 ```sh
-cp MusaCAD-0.1.0-x86_64.AppImage /tmp && cd /tmp
+cp MusaCAD-0.9.0-x86_64.AppImage /tmp && cd /tmp
 
 # Launches + GUI renders (ribbon SVG icons prove the bundled qsvg plugin loads):
-./MusaCAD-0.1.0-x86_64.AppImage
+./MusaCAD-0.9.0-x86_64.AppImage
 
-# Headless load-a-drawing + plot-a-PDF self-test (exits 0 on success):
-MUSACAD_PLOT_TEST="/path/to/drawing.musa|/tmp/out.pdf|1" ./MusaCAD-0.1.0-x86_64.AppImage
+# Check and plot without a display (each exits 0 on success):
+env -u DISPLAY -u WAYLAND_DISPLAY ./MusaCAD-0.9.0-x86_64.AppImage --check /path/to/drawing.musa --json
+env -u DISPLAY -u WAYLAND_DISPLAY ./MusaCAD-0.9.0-x86_64.AppImage --plot /path/to/drawing.musa /tmp/out.pdf --paper A4
 #   -> /tmp/out.pdf is a vector PDF (verify: `pdfimages -list out.pdf` lists no raster images)
 ```
 
-Last verified on this repo: launches, ribbon + SVG icons render, loads
-`dwg_samples/single_block.musa` (27,246 lines), plots a 121 KB vector A4 PDF (Producer Qt 6.4.2,
-0 raster images), exits cleanly.
+Verify the package being released: launch the window, open a drawing and inspect
+the plotted PDF. A successful headless check does not test the viewport.

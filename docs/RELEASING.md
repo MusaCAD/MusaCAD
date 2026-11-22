@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-or-later -->
 # Releasing Musa CAD
 
-The playbook for cutting a release (v0.2.0 and onward). v0.1.0 followed this exact flow.
+Build, verify and publish packages from a versioned source tag. See the
+[wiki release guide](https://wiki.musacad.org/developer/releasing/) for an overview.
+The workflows on the release tag determine which artifacts are published.
 
 ## What gets produced
 
@@ -18,12 +20,14 @@ and `packaging/macos/BUILD_MACOS.md`.
 ## Versioning
 
 - `project(MusaCAD VERSION X.Y.Z ...)` in the top `CMakeLists.txt` is the source of truth.
-- Tags are `vX.Y.Z`. Pushing a `v*` tag triggers **both** CI workflows automatically, so the
-  Linux AppImage + Windows installer are produced for every tagged release.
+- Tags are `vX.Y.Z`. On the current branch, a tag triggers the Linux, Windows and
+  macOS build workflows. Older tags may have a different workflow set.
+- Stable 0.9.0 has Linux and Windows assets. Its Mac build is available separately
+  in the `macos-experimental-0.9.0-1` prerelease.
 
 ## Pre-flight (do not skip)
 
-1. `cmake --preset dev && ctest --preset dev` — all tests green.
+1. `cmake --preset dev && cmake --build --preset dev && ctest --preset dev` — all tests green.
 2. `cmake --build --preset release` — clean, no warnings.
 3. Bump `project(... VERSION ...)` if needed; update `CHANGELOG.md` and write the tracked
    release notes at `docs/release-notes/v<ver>.md`.
@@ -54,7 +58,7 @@ and `packaging/macos/BUILD_MACOS.md`.
 # Build + verify the Linux artifacts and print the publish commands:
 scripts/release.sh <version>          # add --dry-run to build/verify without printing 'go' intent
 
-# Trigger the Windows installer build (or just push the tag, which triggers both workflows):
+# Trigger a Windows test build before tagging:
 gh workflow run build-windows.yml -f version=<version>
 #   ... wait for it, then download the .exe:
 gh run download --name "MusaCAD-<version>-x86_64-setup" --dir .
@@ -74,24 +78,24 @@ Verify locally (the discipline that catches breakage):
       ./MusaCAD-<ver>-x86_64.AppImage --plot <drawing>.musa out.pdf --paper A4
   ```
 - Install + launch the Flatpak (`flatpak install --user ...flatpak`; `flatpak run org.musacad.MusaCAD`).
-- **Windows: a human installs the `.exe` on a real Windows box** and confirms it launches + draws.
-  Claude Code / Linux CI cannot verify the Windows binary at runtime — this step is manual.
+- **Windows:** install the `.exe` on Windows and check launching and drawing.
+  Record interactive testing separately from the CI build and command-line checks.
   Check both programs the installer ships: `musacad_app.exe` from the Start menu (no console
   window), and `musacad.exe --check <drawing>` / `--plot` from cmd or PowerShell (waits and
   returns the exit code). Open a drawing from a folder with a non-ASCII name too.
 
 ## Tag + publish
 
-Pushing the tag is the release action. The Linux and Windows workflows build on the tag
-and their `publish` jobs create the GitHub release for it (whichever finishes first) and
-attach the AppImage and the Windows installer.
+Pushing the tag is the release action. The platform workflows build on the tag,
+create the GitHub release if needed, and attach their packages and checksums.
+Review the workflow files on that tag before publishing.
 
 ```sh
 git tag -a v<version> -m "Musa CAD v<version>"
 git push origin v<version>
 ```
 
-Then, once both workflows are green, set the notes and attach the Flatpak (built locally):
+Once the platform workflows pass, set the notes and attach the Flatpak (built locally):
 
 ```sh
 gh release edit v<version> \
@@ -100,10 +104,9 @@ gh release edit v<version> \
 gh release upload v<version> packaging/flatpak/MusaCAD-<version>.flatpak
 ```
 
-Confirm on GitHub: the release page shows all three artifacts, the notes render correctly,
-and the `v<version>` tag is visible. A tag pushed before the Windows build has been verified
-on real hardware still publishes both installers, so verify first (see above) or delete the
-Windows asset from the release afterwards.
+Confirm that the release page has the expected artifacts and checksums, the notes
+render correctly, and the `v<version>` tag is visible. State which runtime checks
+passed and which are still pending for each platform.
 
 **The Windows installer's checksum.** The Windows workflow publishes
 `MusaCAD-<version>-x86_64-setup.exe.sha256` beside the installer, and the in-place update
@@ -129,19 +132,10 @@ the release lists and the version resource, and says so in its dialog.
   when its build is green (`packaging/flatpak/BUILD_FLATPAK.md`, "A release on Flathub").
 - File follow-up issues for anything deferred or surfaced during verification.
 
-## Linux-only releases
-
-A release may ship **Linux only** when the Windows installer has not yet been verified on
-real hardware (issue #6). In that case: build and publish the AppImage, say so plainly at
-the top of the release notes, and leave the Windows artifact for the person with the
-Windows box to add to the same GitHub release afterwards. Do not publish an unverified
-`.exe` just because CI produced one.
-
 ## Notes / gotchas
 
-- The project has no CMake `install()` rules; both the AppImage and Flatpak assemble `/app`-style
-  trees by hand (binary + `.desktop` + SVG icon + AppStream metainfo). If install rules are added
-  later, simplify the packaging scripts accordingly.
+- Flatpak uses the project's CMake `install()` rules. The AppImage script assembles
+  its AppDir and bundles Qt with linuxdeploy.
 - All app assets (ribbon icons, branding, hatch stock patterns) are compiled into the binary as Qt
   resources — there are no loose data files to ship.
 - The headless CI/offscreen environment cannot exercise the GPU viewport or a real X session;
