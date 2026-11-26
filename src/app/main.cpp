@@ -2,8 +2,11 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include <algorithm>
+#include <chrono>
 #include <clocale>
 #include <cstdio>
+#include <cstdlib>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -476,5 +479,15 @@ int main(int argc, char* argv[]) {
         QTimer::singleShot(1500, &app, &QApplication::quit);
     }
 
-    return app.exec();
+    const int rc = app.exec();
+    // Closing ends the program (#111): the drawings are saved by now, so should tearing the
+    // window and its threads down ever hang, the process still goes after a while instead of
+    // staying in the background.
+    std::thread([rc] {
+        std::this_thread::sleep_for(std::chrono::seconds(15));
+        std::fputs("musacad: shutting down took too long; exiting\n", stderr);
+        std::fflush(stderr);
+        std::_Exit(rc);
+    }).detach();
+    return rc;
 }

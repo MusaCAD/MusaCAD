@@ -30,6 +30,9 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
 - The viewport no longer redraws 60 times a second while nothing changes. At rest it now
   uses almost no CPU, and it goes back to full speed as soon as you move the mouse, type or
   the drawing changes (#110).
+- Closing the window always ends the program: it quits even if another of its windows is
+  still open, and if shutting down ever hangs, the process exits anyway after 15
+  seconds instead of staying in the background (#111).
 - Zoom All includes the drawing limits and visible geometry. Ribbon Extents preserves
   view history, and window/center zoom calculations use device pixels on HiDPI displays (#72).
 - Bold and italic TrueType flags in multiline text select the corresponding font faces (#43).

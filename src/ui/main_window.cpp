@@ -11821,6 +11821,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     // window (and engine) tear down so nothing is silently lost.
     if (save_all_before_quit()) {
         event->accept();
+        // Closing the window ends the program (#111), even if another window of it is still
+        // open somewhere.
+        QMetaObject::invokeMethod(qApp, &QCoreApplication::quit, Qt::QueuedConnection);
     } else {
         event->ignore(); // a Cancel anywhere aborts the quit
     }
