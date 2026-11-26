@@ -17,6 +17,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   bar include Zoom Object, Window and Previous (#72).
 
 ### Changed
+- On Windows laptops with two GPUs, Musa CAD now runs on the dedicated GPU instead of the
+  integrated one, the way games do, so the viewport is smoother. It also sets its own
+  Windows graphics preference to High performance on first start (Settings > System >
+  Display > Graphics); a choice you made there is kept.
 - Available updates appear as a small icon beside command search. The tooltip names the
   new version; clicking opens update details. Current and skipped versions stay hidden.
 - About, crash reports and plot diagnostics identify the source revision instead of a

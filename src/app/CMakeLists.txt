@@ -37,7 +37,11 @@ if(WIN32)
         # linker merges a .manifest source into the executable's manifest.
         musacad.manifest
         # Console attachment for the CLI modes of a windowed program (see below).
-        win_console.cpp)
+        win_console.cpp
+        # Run on the dedicated GPU of a two-GPU laptop (the NVIDIA/AMD exports and Windows'
+        # graphics preference).
+        win_gpu.cpp)
+    target_link_libraries(musacad_app PRIVATE advapi32) # the registry
     # A windowed program (GUI subsystem): launching it from the Start menu or Explorer must
     # not open a console window behind the CAD window. main() stays main(): Qt's entry-point
     # library supplies the WinMain shim.

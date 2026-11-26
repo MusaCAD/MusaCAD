@@ -26,6 +26,7 @@
 #include "musacad/app/plot_cli.hpp"
 #include "musacad/app/wiki_data.hpp"
 #include "musacad/app/win_console.hpp"
+#include "musacad/app/win_gpu.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
 
@@ -163,6 +164,9 @@ int main(int argc, char* argv[]) {
     case CliOptions::Mode::Gui:
         break;
     }
+
+    // Windows: the dedicated GPU of a two-GPU laptop, not the integrated one.
+    prefer_high_performance_gpu();
 
     // Only the options Qt understands reach QApplication; ours are already consumed.
     std::vector<char*> qargv = qt_argv(opts.qt_args);
