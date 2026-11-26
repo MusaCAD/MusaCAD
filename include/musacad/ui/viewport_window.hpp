@@ -366,6 +366,7 @@ public:
     void set_presentation(bool on) noexcept {
         presentation_.store(on, std::memory_order_relaxed);
         presentation_cursor_.store(false, std::memory_order_relaxed);
+        note_activity();
     }
     /// ... and, in presentation, a pointer resting at `world`: the crosshair, the canvas
     /// command entry, snaps, tracking and Dynamic Input follow it as they would the mouse.
@@ -619,7 +620,10 @@ public:
     void set_options_dialog_callback(std::function<void()> cb) { options_dialog_callback_ = std::move(cb); }
     /// The frame rate / frame time readout in the viewport corner (off by default; the
     /// Options dialog turns it on). Thread-safe: the render thread reads it every frame.
-    void set_performance_overlay(bool on) { perf_overlay_.store(on, std::memory_order_relaxed); }
+    void set_performance_overlay(bool on) {
+        perf_overlay_.store(on, std::memory_order_relaxed);
+        note_activity();
+    }
     /// MATCHPROP: the MainWindow supplies the current Settings filter (from QSettings) and
     /// owns the modal Settings dialog. ViewControl::match_filter/match_settings_dialog
     /// forward here on the GUI thread.
@@ -1164,6 +1168,12 @@ private:
     std::mutex park_mutex_;
     std::condition_variable park_cv_;
     bool park_requested_ = false;
+    // At rest (#110): every event on the window and every overlay or view change counts as
+    // activity. The render thread draws at the display's rate while it comes and for half a
+    // second after; otherwise only when the engine publishes a new drawing, and once a second
+    // for anything that is not announced.
+    std::atomic<std::uint64_t> activity_{0};
+    void note_activity() noexcept { activity_.fetch_add(1, std::memory_order_relaxed); }
     bool parked_ = false;
     bool render_running_ = false;
 

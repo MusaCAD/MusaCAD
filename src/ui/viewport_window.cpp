@@ -178,6 +178,7 @@ void ViewportWindow::set_initial_view(render::Vec2 min_world, render::Vec2 max_w
 void ViewportWindow::zoom_extents() {
     // Deferred to the render thread, which has the snapshot bounds.
     zoom_extents_requested_.store(true, std::memory_order_relaxed);
+    note_activity();
 }
 
 void ViewportWindow::request_frame_capture(std::string png_path) {
@@ -186,7 +187,7 @@ void ViewportWindow::request_frame_capture(std::string png_path) {
         capture_path_ = std::move(png_path);
     }
     capture_requested_.store(true, std::memory_order_release);
-    dirty_.store(true, std::memory_order_release); // make sure a frame is rendered
+    note_activity(); // make sure a frame is rendered
 }
 
 bool ViewportWindow::current_view(core::Vec2& center, double& scale) {
@@ -203,6 +204,7 @@ void ViewportWindow::set_view(core::Vec2 center, double scale) {
         pending_view_scale_ = scale;
     }
     view_requested_.store(true, std::memory_order_relaxed); // applied on the render thread
+    note_activity();
 }
 
 bool ViewportWindow::viewport_size(int& w, int& h) const {
@@ -392,6 +394,7 @@ int ViewportWindow::selection_setting(const std::string& name) const {
 }
 
 bool ViewportWindow::set_selection_setting(const std::string& name, int value) {
+    note_activity(); // grips, highlight, UCS icon ...: drawn by the next frame
     const auto in = [value](int lo, int hi) { return value >= lo && value <= hi; };
     if (name == "PICKBOX" && in(0, 50)) {
         pickbox_ = value;
@@ -972,8 +975,11 @@ void ViewportWindow::set_grid_mode(bool on) {
 bool ViewportWindow::grid_mode() const { return grid_on_callback_ ? grid_on_callback_() : false; }
 
 void ViewportWindow::set_grid_settings(const core::GridSettings& g) {
-    std::scoped_lock lock(grid_mutex_);
-    grid_settings_ = g;
+    {
+        std::scoped_lock lock(grid_mutex_);
+        grid_settings_ = g;
+    }
+    note_activity();
 }
 
 bool ViewportWindow::layer_dialog() {
@@ -1489,6 +1495,7 @@ void ViewportWindow::exposeEvent(QExposeEvent*) {
 }
 
 bool ViewportWindow::event(QEvent* e) {
+    note_activity(); // input, resize, expose ...: something may need drawing (#110)
     if (e->type() == QEvent::PlatformSurface &&
         static_cast<QPlatformSurfaceEvent*>(e)->surfaceEventType() ==
             QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
@@ -2135,6 +2142,12 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
     if (!state) return;
     auto& context = state->context;
     bool current = true;
+    // Under the developer hooks every frame is drawn, as the captures and tests expect.
+    const bool always_draw = std::getenv("MUSACAD_SMOKE") != nullptr || std::getenv("MUSACAD_SELFTEST") != nullptr ||
+                             std::getenv("MUSACAD_NO_IDLE") != nullptr;
+    std::uint64_t seen_activity = activity_.load(std::memory_order_relaxed);
+    auto last_active = std::chrono::steady_clock::now();
+    auto last_frame = last_active;
     while (!token.stop_requested()) {
         {
             std::unique_lock lock(park_mutex_);
@@ -2157,7 +2170,48 @@ void ViewportWindow::render_loop(core::threading::stop_token token) {
             state->paced = false;
             state->refresh_anchor = std::chrono::steady_clock::now();
         }
+        // At rest (#110): nothing has happened for half a second, so no frame is drawn until
+        // something does -- an event on the window, an overlay or view change, a new drawing
+        // from the engine -- or a second has passed. Before, a still window was drawn sixty
+        // times a second.
+        if (!always_draw) {
+            using namespace std::chrono_literals;
+            auto now = std::chrono::steady_clock::now();
+            if (const std::uint64_t a = activity_.load(std::memory_order_relaxed); a != seen_activity) {
+                seen_activity = a;
+                last_active = now;
+            }
+            if (now - last_active > 500ms) {
+                bool woke = false;
+                bool parking = false;
+                while (!woke && now - last_frame < 1s && !token.stop_requested()) {
+                    {
+                        std::scoped_lock lock(park_mutex_);
+                        parking = park_requested_;
+                    }
+                    if (parking) {
+                        break; // parked at the top of the loop, with no frame drawn first
+                    }
+                    // A new drawing is taken here; the frame below draws it.
+                    woke = activity_.load(std::memory_order_relaxed) != seen_activity || engine_.consume_snapshot();
+                    if (!woke) {
+                        std::this_thread::sleep_for(16ms);
+                        now = std::chrono::steady_clock::now();
+                    }
+                }
+                if (woke) {
+                    last_active = std::chrono::steady_clock::now();
+                }
+                state->paced = false; // the refresh is measured again
+                state->refresh_anchor = std::chrono::steady_clock::now();
+                if (parking) {
+                    continue;
+                }
+            }
+        }
+        if (token.stop_requested()) break;
         if (!render_frame(*state)) break;
+        last_frame = std::chrono::steady_clock::now();
     }
     // RenderSession destroys GPU resources while its context is current.
 }
@@ -2997,6 +3051,7 @@ int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
 }
 
 void ViewportWindow::rebuild_overlay() {
+    note_activity();
     std::optional<core::Vec2> pending_stretch; // live STRETCH delta to stream, if any
     std::optional<core::TransformPreviewCommand> pending_transform; // live ROTATE / SCALE band
     live_kind_ = 0;
