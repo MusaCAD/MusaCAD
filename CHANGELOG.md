@@ -21,6 +21,8 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   integrated one, the way games do, so the viewport is smoother. It also sets its own
   Windows graphics preference to High performance on first start (Settings > System >
   Display > Graphics); a choice you made there is kept.
+- The Windows installer now ticks "Open .musa drawings with Musa CAD" by default, so
+  double-clicking a drawing opens it. It was easy to skip before. You can still untick it.
 - Available updates appear as a small icon beside command search. The tooltip names the
   new version; clicking opens update details. Current and skipped versions stay hidden.
 - About, crash reports and plot diagnostics identify the source revision instead of a

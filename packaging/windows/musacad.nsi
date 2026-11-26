@@ -181,11 +181,11 @@ Section "Musa CAD (required)" SecCore
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
 
-; Optional, UNCHECKED by default: register file types. The user owns the default-app
-; choice -- we claim Musa's own .musa, and only ADD Musa to the "Open with" list for the
-; shared .dxf/.dwg (never force-stealing those defaults). An upgrade pre-selects it when
-; the previous version had registered them (see .onInit).
-Section /o "Register .musa / .dxf file types" SecAssoc
+; Ticked by default (it was easy to skip without knowing what it meant, and then .musa
+; drawings would not open with a double-click). Unticking it still works. We claim Musa's
+; own .musa, and only ADD Musa to the "Open with" list for the shared .dxf/.dwg (never
+; taking over those defaults).
+Section "Open .musa drawings with Musa CAD (recommended)" SecAssoc
   WriteRegStr HKLM "Software\Classes\${PROGID}" "" "Musa CAD Drawing"
   WriteRegStr HKLM "Software\Classes\${PROGID}\DefaultIcon" "" "$INSTDIR\musacad.ico"
   WriteRegStr HKLM "Software\Classes\${PROGID}\shell\open\command" "" '"$INSTDIR\${EXENAME}" "%1"'
@@ -208,7 +208,7 @@ Section "-Relaunch"
 SectionEnd
 
 LangString DESC_Core  ${LANG_ENGLISH} "The Musa CAD application and its Qt runtime."
-LangString DESC_Assoc ${LANG_ENGLISH} "Associate .musa (and offer Musa CAD for .dxf/.dwg in Open With)."
+LangString DESC_Assoc ${LANG_ENGLISH} "Double-clicking a .musa drawing opens it in Musa CAD. Musa CAD is also added to Open With for .dxf and .dwg files."
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore}  $(DESC_Core)
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAssoc} $(DESC_Assoc)
@@ -219,9 +219,6 @@ LangString DESC_Assoc ${LANG_ENGLISH} "Associate .musa (and offer Musa CAD for .
 ; program, and a standard user who elevated with an administrator's credentials finds the
 ; shortcut in the administrator's menu. Set in both halves (see un.onInit), so the
 ; uninstaller removes what the installer created.
-;
-; Placed after the sections: it refers to ${SecAssoc}, which exists once that section is
-; declared.
 Function .onInit
   SetShellVarContext all
   StrCpy $UpdateMode 0
@@ -245,13 +242,6 @@ Function .onInit
     StrCpy $WelcomeText "Setup found ${APPNAME} $R2 in$\r$\n$INSTDIR$\r$\n$\r$\nand will update it to \
 version ${VERSION} there. Your settings and drawings are not touched.$\r$\n$\r$\nClose ${APPNAME} before \
 you continue, then click Next."
-    ; Keep the file types the previous version registered.
-    ReadRegStr $R3 HKLM "Software\Classes\.musa" ""
-    ${If} $R3 == "${PROGID}"
-      SectionGetFlags ${SecAssoc} $R4
-      IntOp $R4 $R4 | ${SF_SELECTED}
-      SectionSetFlags ${SecAssoc} $R4
-    ${EndIf}
   ${Else}
     StrCpy $WelcomeText "Setup will install ${APPNAME} ${VERSION} on your computer.$\r$\n$\r$\nClick Next \
 to continue."
