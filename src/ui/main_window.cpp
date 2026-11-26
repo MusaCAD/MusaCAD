@@ -11406,6 +11406,29 @@ QString MainWindow::save_path_with_extension(QString path, const QString& ext) {
     return path + ext;
 }
 
+QString MainWindow::suggested_save_name(const QString& ext) const {
+    QString name;
+    if (viewport_ != nullptr) {
+        const std::uint64_t active = viewport_->active_document_id();
+        for (const core::DocumentInfo& d : viewport_->documents()) {
+            if (d.id == active) {
+                name = QString::fromStdString(d.name);
+            }
+        }
+    }
+    const QString path = active_doc_path();
+    const QFileInfo info(path.isEmpty() ? name : path);
+    QString base = info.completeBaseName();
+    if (base.isEmpty()) {
+        base = QStringLiteral("Drawing");
+    }
+    // A portal path is a stand-in for the real folder: only the name is worth suggesting.
+    if (!path.isEmpty() && !portal_file_grant(path)) {
+        return info.dir().filePath(base + ext);
+    }
+    return base + ext;
+}
+
 QString MainWindow::open_path_with_references(const QString& path, bool dxf) {
     if (!portal_file_grant(path)) {
         return path;
@@ -11525,8 +11548,9 @@ void MainWindow::file_new() {
 }
 
 void MainWindow::file_open() {
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"),
-                                                      QString(), QStringLiteral("Musa CAD (*.musa)"));
+    // All files too: a drawing saved without its extension can still be found (#109).
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Drawing"), QString(),
+                                                      QStringLiteral("Musa CAD (*.musa);;All files (*)"));
     open_from(path, false);
 }
 
@@ -11540,7 +11564,8 @@ void MainWindow::file_save() {
 }
 
 void MainWindow::file_save_as() {
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"),
+                                                      suggested_save_name(QStringLiteral(".musa")),
                                                       QStringLiteral("Musa CAD (*.musa)"));
     save_to(save_path_with_extension(path, QStringLiteral(".musa")), false);
 }
@@ -11753,7 +11778,8 @@ bool MainWindow::prompt_save_document(std::uint64_t id, const QString& name, con
     if (choice == QMessageBox::Save) {
         QString p = path;
         if (p.isEmpty()) {
-            p = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"), QString(),
+            p = QFileDialog::getSaveFileName(this, QStringLiteral("Save Drawing As"),
+                                             suggested_save_name(QStringLiteral(".musa")),
                                              QStringLiteral("Musa CAD (*.musa)"));
             if (p.isEmpty()) {
                 return false; // cancelled the path dialog -> abort
@@ -11839,7 +11865,8 @@ void MainWindow::file_import_dxf() {
 }
 
 void MainWindow::file_export_dxf() {
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"), QString(),
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export DXF"),
+                                                      suggested_save_name(QStringLiteral(".dxf")),
                                                       QStringLiteral("DXF (*.dxf)"));
     if (path.isEmpty()) {
         return;
@@ -12257,7 +12284,8 @@ void MainWindow::file_export_dwg() {
             return;
         }
     }
-    QString dwg = QFileDialog::getSaveFileName(this, QStringLiteral("Export DWG"), QString(),
+    QString dwg = QFileDialog::getSaveFileName(this, QStringLiteral("Export DWG"),
+                                               suggested_save_name(QStringLiteral(".dwg")),
                                                QStringLiteral("DWG (*.dwg)"));
     if (dwg.isEmpty()) {
         return;
@@ -12921,7 +12949,9 @@ void MainWindow::publish() {
         command_widget_->append_line("PUBLISH: no sheets ticked.");
         return;
     }
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Publish to PDF"), QString(), QStringLiteral("PDF (*.pdf)"));
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Publish to PDF"),
+                                                suggested_save_name(QStringLiteral(".pdf")),
+                                                QStringLiteral("PDF (*.pdf)"));
     if (path.isEmpty()) {
         return;
     }
@@ -13059,7 +13089,8 @@ void MainWindow::do_plot(const PlotSpec& spec) {
     const QSizeF paper(spec.paper_w_mm, spec.paper_h_mm);
 
     if (spec.target == "PDF") {
-        QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Plot to PDF"), QString(),
+        QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Plot to PDF"),
+                                                    suggested_save_name(QStringLiteral(".pdf")),
                                                     QStringLiteral("PDF (*.pdf)"));
         if (path.isEmpty()) {
             return;

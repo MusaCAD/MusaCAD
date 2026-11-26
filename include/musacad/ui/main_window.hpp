@@ -276,6 +276,10 @@ private:
     /// Prompt Save/Discard/Cancel for one document (queues the Save). Returns false on Cancel.
     bool prompt_save_document(std::uint64_t id, const QString& name, const QString& path);
     [[nodiscard]] QString active_doc_path() const; ///< the active document's native path ("")
+    /// The name a save dialog starts with: the drawing's name with `ext` (".musa", ".pdf" ...),
+    /// in its folder when it has one. The file portal saves exactly the name picked, so the
+    /// extension has to be in the dialog already (#109).
+    [[nodiscard]] QString suggested_save_name(const QString& ext) const;
     [[nodiscard]] QString active_doc_name() const; ///< the active document's display name
     void build_ribbon();
     /// The ribbon's Properties controls (ribbon_layout.cpp): apply a pick, mirror the state.

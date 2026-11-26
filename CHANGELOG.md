@@ -23,6 +23,10 @@ All notable changes to Musa CAD are recorded here. This project aims to follow
   compiler timestamp, which reproducible Flatpak builds replace with a fixed date.
 
 ### Fixed
+- Save dialogs start with the drawing's name and the right extension (`.musa`, `.dxf`,
+  `.dwg`, `.pdf`). In the Flatpak the dialog saves exactly the name typed, so a drawing could
+  end up without `.musa` and then not open from the file manager (#109). Open Drawing also
+  offers "All files", for drawings already saved without the extension.
 - Zoom All includes the drawing limits and visible geometry. Ribbon Extents preserves
   view history, and window/center zoom calculations use device pixels on HiDPI displays (#72).
 - Bold and italic TrueType flags in multiline text select the corresponding font faces (#43).
